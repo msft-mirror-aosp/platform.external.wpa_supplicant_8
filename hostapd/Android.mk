@@ -1120,6 +1120,9 @@ LOCAL_SHARED_LIBRARIES := libc libcutils liblog
 LOCAL_CFLAGS := $(L_CFLAGS)
 LOCAL_SRC_FILES := $(OBJS_c)
 LOCAL_C_INCLUDES := $(INCLUDES)
+LOCAL_LICENSE_KINDS := SPDX-license-identifier-BSD SPDX-license-identifier-BSD-3-Clause SPDX-license-identifier-GPL SPDX-license-identifier-GPL-2.0 SPDX-license-identifier-ISC legacy_unencumbered
+LOCAL_LICENSE_CONDITIONS := notice restricted unencumbered
+LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../COPYING $(LOCAL_PATH)/../NOTICE
 include $(BUILD_EXECUTABLE)
 
 ########################
@@ -1154,6 +1157,9 @@ LOCAL_CFLAGS := $(L_CFLAGS)
 LOCAL_SRC_FILES := $(OBJS)
 LOCAL_C_INCLUDES := $(INCLUDES)
 LOCAL_INIT_RC := hostapd.android.rc
+LOCAL_LICENSE_KINDS := SPDX-license-identifier-BSD SPDX-license-identifier-BSD-3-Clause SPDX-license-identifier-GPL SPDX-license-identifier-GPL-2.0 SPDX-license-identifier-ISC legacy_unencumbered
+LOCAL_LICENSE_CONDITIONS := notice restricted unencumbered
+LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../COPYING $(LOCAL_PATH)/../NOTICE
 include $(BUILD_EXECUTABLE)
 
 ########################
@@ -1178,6 +1184,9 @@ endif
 LOCAL_CFLAGS := $(patsubst -DCONFIG_CTRL_IFACE_HIDL,,$(L_CFLAGS))
 LOCAL_SRC_FILES := $(OBJS)
 LOCAL_C_INCLUDES := $(INCLUDES)
+LOCAL_LICENSE_KINDS := SPDX-license-identifier-BSD SPDX-license-identifier-BSD-3-Clause SPDX-license-identifier-GPL SPDX-license-identifier-GPL-2.0 SPDX-license-identifier-ISC legacy_unencumbered
+LOCAL_LICENSE_CONDITIONS := notice restricted unencumbered
+LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../COPYING $(LOCAL_PATH)/../NOTICE
 include $(BUILD_EXECUTABLE)
 
 ifeq ($(HOSTAPD_USE_HIDL), y)
@@ -1203,6 +1212,9 @@ LOCAL_SHARED_LIBRARIES := \
     liblog
 LOCAL_EXPORT_C_INCLUDE_DIRS := \
     $(LOCAL_PATH)/hidl/$(HIDL_INTERFACE_VERSION)
+LOCAL_LICENSE_KINDS := SPDX-license-identifier-BSD SPDX-license-identifier-BSD-3-Clause SPDX-license-identifier-GPL SPDX-license-identifier-GPL-2.0 SPDX-license-identifier-ISC legacy_unencumbered
+LOCAL_LICENSE_CONDITIONS := notice restricted unencumbered
+LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../COPYING $(LOCAL_PATH)/../NOTICE
 include $(BUILD_STATIC_LIBRARY)
 endif # HOSTAPD_USE_HIDL == y
 endif # ifeq ($(WPA_BUILD_HOSTAPD),true)
