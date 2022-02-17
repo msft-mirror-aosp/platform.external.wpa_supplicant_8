@@ -104,6 +104,9 @@
  */
 #define P2P_RECONSIDER_GO_MOVE_DELAY 30
 
+/* Check if frequency is 2GHz */
+#define	IS_2GHZ(n)	(n >= 2412 && n <= 2484)
+
 enum p2p_group_removal_reason {
 	P2P_GROUP_REMOVAL_UNKNOWN,
 	P2P_GROUP_REMOVAL_SILENT,
@@ -1402,11 +1405,13 @@ static void wpas_group_formation_completed(struct wpa_supplicant *wpa_s,
 			persistent = ssid->p2p_persistent_group;
 			os_memcpy(go_dev_addr, wpa_s->global->p2p_dev_addr,
 				  ETH_ALEN);
-		} else
+		} else {
+			os_memset(go_dev_addr, 0, ETH_ALEN);
 			persistent = wpas_p2p_persistent_group(wpa_s,
 							       go_dev_addr,
 							       ssid->ssid,
 							       ssid->ssid_len);
+		}
 	} else {
 		client = wpa_s->p2p_group_interface ==
 			P2P_GROUP_INTERFACE_CLIENT;
@@ -5564,6 +5569,7 @@ static int wpas_p2p_setup_freqs(struct wpa_supplicant *wpa_s, int freq,
 	struct wpa_used_freq_data *freqs;
 	int res, best_freq, num_unused;
 	unsigned int freq_in_use = 0, num, i, max_pref_freq;
+	int p2p_pref_freq;
 
 	max_pref_freq = *num_pref_freq;
 	*num_pref_freq = 0;
@@ -5632,46 +5638,68 @@ static int wpas_p2p_setup_freqs(struct wpa_supplicant *wpa_s, int freq,
 
 	best_freq = wpas_p2p_pick_best_used_freq(wpa_s, freqs, num);
 
-	if (!wpa_s->conf->num_p2p_pref_chan && *pref_freq == 0) {
-		enum wpa_driver_if_type iface_type;
-
-		if (go)
-			iface_type = WPA_IF_P2P_GO;
-		else
-			iface_type = WPA_IF_P2P_CLIENT;
-
-		wpa_printf(MSG_DEBUG, "P2P: best_freq=%d, go=%d",
-			   best_freq, go);
-
-		res = wpa_drv_get_pref_freq_list(wpa_s, iface_type,
-						 &max_pref_freq,
-						 pref_freq_list);
-		if (!res && max_pref_freq > 0) {
-			*num_pref_freq = max_pref_freq;
+	if (*pref_freq == 0) {
+		if (wpa_s->conf->num_p2p_pref_chan && IS_2GHZ(best_freq)) {
 			i = 0;
-			while (i < *num_pref_freq &&
-			       (!p2p_supported_freq(wpa_s->global->p2p,
-						    pref_freq_list[i]) ||
-				wpas_p2p_disallowed_freq(wpa_s->global,
-							 pref_freq_list[i]))) {
-				wpa_printf(MSG_DEBUG,
-					   "P2P: preferred_freq_list[%d]=%d is disallowed",
-					   i, pref_freq_list[i]);
+			while (i < wpa_s->conf->num_p2p_pref_chan) {
+				p2p_pref_freq = ieee80211_chan_to_freq(NULL,
+					wpa_s->conf->p2p_pref_chan[i].op_class,
+					wpa_s->conf->p2p_pref_chan[i].chan);
+
+				if (p2p_supported_freq(wpa_s->global->p2p, p2p_pref_freq) &&
+					!wpas_p2p_disallowed_freq(wpa_s->global, p2p_pref_freq)) {
+					best_freq = p2p_pref_freq;
+					wpa_printf(MSG_DEBUG, "P2P: Using frequency (%u MHz) "
+						"from P2P preferred channel list", best_freq);
+					break;
+				} else {
+					wpa_printf(MSG_MSGDUMP, "P2P: Skipping preferred "
+						"frequency (%u MHz) ", p2p_pref_freq);
+				}
 				i++;
 			}
-			if (i != *num_pref_freq) {
-				best_freq = pref_freq_list[i];
-				wpa_printf(MSG_DEBUG,
-					   "P2P: Using preferred_freq_list[%d]=%d",
-					   i, best_freq);
+		} else {
+			enum wpa_driver_if_type iface_type;
+
+			if (go)
+				iface_type = WPA_IF_P2P_GO;
+			else
+				iface_type = WPA_IF_P2P_CLIENT;
+
+			wpa_printf(MSG_DEBUG, "P2P: best_freq=%d, go=%d",
+				best_freq, go);
+
+			res = wpa_drv_get_pref_freq_list(wpa_s, iface_type,
+						 &max_pref_freq,
+						 pref_freq_list);
+			if (!res && max_pref_freq > 0) {
+				*num_pref_freq = max_pref_freq;
+				i = 0;
+				while (i < *num_pref_freq &&
+					(!p2p_supported_freq(wpa_s->global->p2p,
+						pref_freq_list[i]) ||
+					wpas_p2p_disallowed_freq(wpa_s->global,
+							pref_freq_list[i]))) {
+					wpa_printf(MSG_DEBUG,
+						"P2P: preferred_freq_list[%d]=%d is disallowed",
+						i, pref_freq_list[i]);
+					i++;
+				}
+				if (i != *num_pref_freq) {
+					best_freq = pref_freq_list[i];
+					wpa_printf(MSG_DEBUG,
+						"P2P: Using preferred_freq_list[%d]=%d",
+						i, best_freq);
+				} else {
+					wpa_printf(MSG_DEBUG,
+						"P2P: All driver preferred frequencies are "
+						"disallowed for P2P use");
+					*num_pref_freq = 0;
+				}
 			} else {
 				wpa_printf(MSG_DEBUG,
-					   "P2P: All driver preferred frequencies are disallowed for P2P use");
-				*num_pref_freq = 0;
+					"P2P: No preferred frequency list available");
 			}
-		} else {
-			wpa_printf(MSG_DEBUG,
-				   "P2P: No preferred frequency list available");
 		}
 	}
 
@@ -6075,7 +6103,25 @@ static int wpas_p2p_select_go_freq(struct wpa_supplicant *wpa_s, int freq)
 		} else {
 			if (os_get_random((u8 *) &r, sizeof(r)) < 0)
 				return -1;
-			freq = 2412 + (r % 3) * 25;
+			int possible_2g_freqs[] = {
+				/* operating class 81 */
+				2412, 2437, 2462,
+			};
+			int possible_2g_freqs_num =
+			    sizeof(possible_2g_freqs)/sizeof(possible_2g_freqs[0]);
+			int i;
+			for (i = 0; i < possible_2g_freqs_num; i++, r++) {
+				freq = possible_2g_freqs[r % possible_2g_freqs_num];
+				if (p2p_supported_freq_go(wpa_s->global->p2p, freq)) {
+					break;
+				}
+			}
+
+			if (i >= possible_2g_freqs_num) {
+				wpa_printf(MSG_DEBUG, "P2P: Could not select "
+					   "2.4 GHz channel for P2P group");
+				return -1;
+			}
 			wpa_printf(MSG_DEBUG, "P2P: Use random 2.4 GHz band "
 				   "channel: %d MHz", freq);
 		}
