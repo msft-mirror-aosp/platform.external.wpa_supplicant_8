@@ -2,13 +2,14 @@
  * DPP functionality shared between hostapd and wpa_supplicant
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
- * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
  */
 
 #include "utils/includes.h"
+#include <openssl/opensslv.h>
+#include <openssl/err.h>
 
 #include "utils/common.h"
 #include "utils/base64.h"
@@ -26,16 +27,32 @@
 #include "dpp_i.h"
 
 
+static const char * dpp_netrole_str(enum dpp_netrole netrole);
+
 #ifdef CONFIG_TESTING_OPTIONS
-#ifdef CONFIG_DPP3
-int dpp_version_override = 3;
-#elif defined(CONFIG_DPP2)
+#ifdef CONFIG_DPP2
 int dpp_version_override = 2;
 #else
 int dpp_version_override = 1;
 #endif
 enum dpp_test_behavior dpp_test = DPP_TEST_DISABLED;
 #endif /* CONFIG_TESTING_OPTIONS */
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || \
+	(defined(LIBRESSL_VERSION_NUMBER) && \
+	 LIBRESSL_VERSION_NUMBER < 0x20700000L)
+/* Compatibility wrappers for older versions. */
+
+#ifdef CONFIG_DPP2
+static EC_KEY * EVP_PKEY_get0_EC_KEY(EVP_PKEY *pkey)
+{
+	if (pkey->type != EVP_PKEY_EC)
+		return NULL;
+	return pkey->pkey.ec;
+}
+#endif /* CONFIG_DPP2 */
+
+#endif
 
 
 void dpp_auth_fail(struct dpp_authentication *auth, const char *txt)
@@ -163,7 +180,7 @@ void dpp_bootstrap_info_free(struct dpp_bootstrap_info *info)
 	os_free(info->info);
 	os_free(info->chan);
 	os_free(info->pk);
-	crypto_ec_key_deinit(info->pubkey);
+	EVP_PKEY_free(info->pubkey);
 	str_clear_free(info->configurator_params);
 	os_free(info);
 }
@@ -307,8 +324,6 @@ int dpp_parse_uri_version(struct dpp_bootstrap_info *bi, const char *version)
 		bi->version = 1;
 	else if (*version == '2')
 		bi->version = 2;
-	else if (*version == '3')
-		bi->version = 3;
 	else
 		wpa_printf(MSG_DEBUG, "DPP: Unknown URI version");
 
@@ -631,8 +646,7 @@ int dpp_gen_uri(struct dpp_bootstrap_info *bi)
 		    macstr,
 		    bi->info ? "I:" : "", bi->info ? bi->info : "",
 		    bi->info ? ";" : "",
-		    DPP_VERSION == 3 ? "V:3;" :
-		    (DPP_VERSION == 2 ? "V:2;" : ""),
+		    DPP_VERSION == 2 ? "V:2;" : "",
 		    bi->pk);
 	return 0;
 }
@@ -1209,13 +1223,6 @@ int dpp_set_configurator(struct dpp_authentication *auth, const char *cmd)
 
 	wpa_printf(MSG_DEBUG, "DPP: Set configurator parameters: %s", cmd);
 
-	if (os_strstr(cmd, " conf=query")) {
-		auth->configurator_set = 0;
-		auth->use_config_query = true;
-		ret = 0;
-		goto fail;
-	}
-
 	pos = os_strstr(cmd, " configurator=");
 	if (!auth->conf && pos) {
 		pos += 14;
@@ -1261,9 +1268,9 @@ void dpp_auth_deinit(struct dpp_authentication *auth)
 	dpp_configuration_free(auth->conf2_ap);
 	dpp_configuration_free(auth->conf_sta);
 	dpp_configuration_free(auth->conf2_sta);
-	crypto_ec_key_deinit(auth->own_protocol_key);
-	crypto_ec_key_deinit(auth->peer_protocol_key);
-	crypto_ec_key_deinit(auth->reconfig_old_protocol_key);
+	EVP_PKEY_free(auth->own_protocol_key);
+	EVP_PKEY_free(auth->peer_protocol_key);
+	EVP_PKEY_free(auth->reconfig_old_protocol_key);
 	wpabuf_free(auth->req_msg);
 	wpabuf_free(auth->resp_msg);
 	wpabuf_free(auth->conf_req);
@@ -1296,9 +1303,6 @@ void dpp_auth_deinit(struct dpp_authentication *auth)
 		dl_list_del(&auth->tmp_peer_bi->list);
 		dpp_bootstrap_info_free(auth->tmp_peer_bi);
 	}
-	os_free(auth->e_name);
-	os_free(auth->e_mud_url);
-	os_free(auth->e_band_support);
 #ifdef CONFIG_TESTING_OPTIONS
 	os_free(auth->config_obj_override);
 	os_free(auth->discovery_override);
@@ -1356,15 +1360,14 @@ dpp_build_conf_start(struct dpp_authentication *auth,
 }
 
 
-int dpp_build_jwk(struct wpabuf *buf, const char *name,
-		  struct crypto_ec_key *key, const char *kid,
-		  const struct dpp_curve_params *curve)
+int dpp_build_jwk(struct wpabuf *buf, const char *name, EVP_PKEY *key,
+		  const char *kid, const struct dpp_curve_params *curve)
 {
 	struct wpabuf *pub;
 	const u8 *pos;
 	int ret = -1;
 
-	pub = crypto_ec_key_get_pubkey_point(key, 0);
+	pub = dpp_get_pubkey_point(key, 0);
 	if (!pub)
 		goto fail;
 
@@ -1409,7 +1412,7 @@ static void dpp_build_legacy_cred_params(struct wpabuf *buf,
 }
 
 
-const char * dpp_netrole_str(enum dpp_netrole netrole)
+static const char * dpp_netrole_str(enum dpp_netrole netrole)
 {
 	switch (netrole) {
 	case DPP_NETROLE_STA:
@@ -1513,10 +1516,6 @@ skip_groups:
 		json_value_sep(dppcon);
 		json_add_string(dppcon, "expiry", expiry);
 	}
-#ifdef CONFIG_DPP3
-	json_value_sep(dppcon);
-	json_add_int(dppcon, "version", auth->peer_version);
-#endif /* CONFIG_DPP3 */
 	json_end_object(dppcon);
 	wpa_printf(MSG_DEBUG, "DPP: dppCon: %s",
 		   (const char *) wpabuf_head(dppcon));
@@ -1646,25 +1645,6 @@ dpp_build_conf_obj_legacy(struct dpp_authentication *auth,
 }
 
 
-static int dpp_get_peer_bi_id(struct dpp_authentication *auth)
-{
-	struct dpp_bootstrap_info *bi;
-
-	if (auth->peer_bi)
-		return auth->peer_bi->id;
-	if (auth->tmp_peer_bi)
-		return auth->tmp_peer_bi->id;
-
-	bi = os_zalloc(sizeof(*bi));
-	if (!bi)
-		return -1;
-	bi->id = dpp_next_id(auth->global);
-	dl_list_add(&auth->global->bootstrap, &bi->list);
-	auth->tmp_peer_bi = bi;
-	return bi->id;
-}
-
-
 static struct wpabuf *
 dpp_build_conf_obj(struct dpp_authentication *auth, enum dpp_netrole netrole,
 		   int idx, bool cert_req)
@@ -1693,19 +1673,10 @@ dpp_build_conf_obj(struct dpp_authentication *auth, enum dpp_netrole netrole,
 			conf = auth->conf2_ap;
 	}
 	if (!conf) {
-		if (idx == 0) {
-			if (auth->use_config_query) {
-				wpa_printf(MSG_DEBUG,
-					   "DPP: No configuration available for Enrollee(%s) - waiting for configuration",
-					   dpp_netrole_str(netrole));
-				auth->waiting_config = true;
-				dpp_get_peer_bi_id(auth);
-				return NULL;
-			}
+		if (idx == 0)
 			wpa_printf(MSG_DEBUG,
 				   "DPP: No configuration available for Enrollee(%s) - reject configuration request",
 				   dpp_netrole_str(netrole));
-		}
 		return NULL;
 	}
 
@@ -1759,8 +1730,6 @@ dpp_build_conf_resp(struct dpp_authentication *auth, const u8 *e_nonce,
 		}
 	}
 
-	if (!conf && auth->waiting_config)
-		return NULL;
 	if (conf || env_data)
 		status = DPP_STATUS_OK;
 	else if (!cert_req && netrole == DPP_NETROLE_STA && auth->conf_sta &&
@@ -2009,8 +1978,6 @@ dpp_conf_req_rx(struct dpp_authentication *auth, const u8 *attr_start,
 		goto fail;
 	}
 	wpa_printf(MSG_DEBUG, "DPP: Enrollee name = '%s'", token->string);
-	os_free(auth->e_name);
-	auth->e_name = os_strdup(token->string);
 
 	token = json_get_member(root, "wi-fi_tech");
 	if (!token || token->type != JSON_STRING) {
@@ -2050,8 +2017,6 @@ dpp_conf_req_rx(struct dpp_authentication *auth, const u8 *attr_start,
 		wpa_printf(MSG_DEBUG, "DPP: mudurl = '%s'", token->string);
 		wpa_msg(auth->msg_ctx, MSG_INFO, DPP_EVENT_MUD_URL "%s",
 			token->string);
-		os_free(auth->e_mud_url);
-		auth->e_mud_url = os_strdup(token->string);
 	}
 
 	token = json_get_member(root, "bandSupport");
@@ -2092,8 +2057,7 @@ dpp_conf_req_rx(struct dpp_authentication *auth, const u8 *attr_start,
 			}
 			pos += res;
 		}
-		os_free(auth->e_band_support);
-		auth->e_band_support = opclass;
+		os_free(opclass);
 		wpa_msg(auth->msg_ctx, MSG_INFO, DPP_EVENT_BAND_SUPPORT "%s",
 			txt);
 	}
@@ -2111,9 +2075,21 @@ dpp_conf_req_rx(struct dpp_authentication *auth, const u8 *attr_start,
 			goto cont;
 		}
 
-		id = dpp_get_peer_bi_id(auth);
-		if (id < 0)
-			goto fail;
+		if (auth->peer_bi) {
+			id = auth->peer_bi->id;
+		} else if (auth->tmp_peer_bi) {
+			id = auth->tmp_peer_bi->id;
+		} else {
+			struct dpp_bootstrap_info *bi;
+
+			bi = os_zalloc(sizeof(*bi));
+			if (!bi)
+				goto fail;
+			bi->id = dpp_next_id(auth->global);
+			dl_list_add(&auth->global->bootstrap, &bi->list);
+			auth->tmp_peer_bi = bi;
+			id = bi->id;
+		}
 
 		wpa_printf(MSG_DEBUG, "DPP: CSR is valid - forward to CA/RA");
 		txt = base64_encode_no_lf(wpabuf_head(cert_req),
@@ -2189,13 +2165,14 @@ static int dpp_parse_cred_legacy(struct dpp_config_obj *conf,
 }
 
 
-struct crypto_ec_key * dpp_parse_jwk(struct json_token *jwk,
-				     const struct dpp_curve_params **key_curve)
+EVP_PKEY * dpp_parse_jwk(struct json_token *jwk,
+			 const struct dpp_curve_params **key_curve)
 {
 	struct json_token *token;
 	const struct dpp_curve_params *curve;
 	struct wpabuf *x = NULL, *y = NULL;
-	struct crypto_ec_key *key = NULL;
+	EC_GROUP *group;
+	EVP_PKEY *pkey = NULL;
 
 	token = json_get_member(jwk, "kty");
 	if (!token || token->type != JSON_STRING) {
@@ -2248,18 +2225,22 @@ struct crypto_ec_key * dpp_parse_jwk(struct json_token *jwk,
 		goto fail;
 	}
 
-	key = crypto_ec_key_set_pub(curve->ike_group, wpabuf_head(x),
-				    wpabuf_head(y), wpabuf_len(x));
-	if (!key)
+	group = EC_GROUP_new_by_curve_name(OBJ_txt2nid(curve->name));
+	if (!group) {
+		wpa_printf(MSG_DEBUG, "DPP: Could not prepare group for JWK");
 		goto fail;
+	}
 
+	pkey = dpp_set_pubkey_point_group(group, wpabuf_head(x), wpabuf_head(y),
+					  wpabuf_len(x));
+	EC_GROUP_free(group);
 	*key_curve = curve;
 
 fail:
 	wpabuf_free(x);
 	wpabuf_free(y);
 
-	return key;
+	return pkey;
 }
 
 
@@ -2349,7 +2330,7 @@ static int dpp_parse_connector(struct dpp_authentication *auth,
 {
 	struct json_token *root, *groups, *netkey, *token;
 	int ret = -1;
-	struct crypto_ec_key *key = NULL;
+	EVP_PKEY *key = NULL;
 	const struct dpp_curve_params *curve;
 	unsigned int rules = 0;
 
@@ -2416,7 +2397,7 @@ skip_groups:
 		goto fail;
 	dpp_debug_print_key("DPP: Received netAccessKey", key);
 
-	if (crypto_ec_key_cmp(key, auth->own_protocol_key)) {
+	if (EVP_PKEY_cmp(key, auth->own_protocol_key) != 1) {
 		wpa_printf(MSG_DEBUG,
 			   "DPP: netAccessKey in connector does not match own protocol key");
 #ifdef CONFIG_TESTING_OPTIONS
@@ -2433,45 +2414,47 @@ skip_groups:
 
 	ret = 0;
 fail:
-	crypto_ec_key_deinit(key);
+	EVP_PKEY_free(key);
 	json_free(root);
 	return ret;
 }
 
 
-static void dpp_copy_csign(struct dpp_config_obj *conf,
-			   struct crypto_ec_key *csign)
+static void dpp_copy_csign(struct dpp_config_obj *conf, EVP_PKEY *csign)
 {
-	struct wpabuf *c_sign_key;
+	unsigned char *der = NULL;
+	int der_len;
 
-	c_sign_key = crypto_ec_key_get_subject_public_key(csign);
-	if (!c_sign_key)
+	der_len = i2d_PUBKEY(csign, &der);
+	if (der_len <= 0)
 		return;
-
 	wpabuf_free(conf->c_sign_key);
-	conf->c_sign_key = c_sign_key;
+	conf->c_sign_key = wpabuf_alloc_copy(der, der_len);
+	OPENSSL_free(der);
 }
 
 
-static void dpp_copy_ppkey(struct dpp_config_obj *conf,
-			   struct crypto_ec_key *ppkey)
+static void dpp_copy_ppkey(struct dpp_config_obj *conf, EVP_PKEY *ppkey)
 {
-	struct wpabuf *pp_key;
+	unsigned char *der = NULL;
+	int der_len;
 
-	pp_key = crypto_ec_key_get_subject_public_key(ppkey);
-	if (!pp_key)
+	der_len = i2d_PUBKEY(ppkey, &der);
+	if (der_len <= 0)
 		return;
-
 	wpabuf_free(conf->pp_key);
-	conf->pp_key = pp_key;
+	conf->pp_key = wpabuf_alloc_copy(der, der_len);
+	OPENSSL_free(der);
 }
 
 
 static void dpp_copy_netaccesskey(struct dpp_authentication *auth,
 				  struct dpp_config_obj *conf)
 {
-	struct wpabuf *net_access_key;
-	struct crypto_ec_key *own_key;
+	unsigned char *der = NULL;
+	int der_len;
+	EC_KEY *eckey;
+	EVP_PKEY *own_key;
 
 	own_key = auth->own_protocol_key;
 #ifdef CONFIG_DPP2
@@ -2479,13 +2462,19 @@ static void dpp_copy_netaccesskey(struct dpp_authentication *auth,
 	    auth->reconfig_old_protocol_key)
 		own_key = auth->reconfig_old_protocol_key;
 #endif /* CONFIG_DPP2 */
-
-	net_access_key = crypto_ec_key_get_ecprivate_key(own_key, true);
-	if (!net_access_key)
+	eckey = EVP_PKEY_get1_EC_KEY(own_key);
+	if (!eckey)
 		return;
 
+	der_len = i2d_ECPrivateKey(eckey, &der);
+	if (der_len <= 0) {
+		EC_KEY_free(eckey);
+		return;
+	}
 	wpabuf_free(auth->net_access_key);
-	auth->net_access_key = net_access_key;
+	auth->net_access_key = wpabuf_alloc_copy(der, der_len);
+	OPENSSL_free(der);
+	EC_KEY_free(eckey);
 }
 
 
@@ -2496,7 +2485,7 @@ static int dpp_parse_cred_dpp(struct dpp_authentication *auth,
 	struct dpp_signed_connector_info info;
 	struct json_token *token, *csign, *ppkey;
 	int ret = -1;
-	struct crypto_ec_key *csign_pub = NULL, *pp_pub = NULL;
+	EVP_PKEY *csign_pub = NULL, *pp_pub = NULL;
 	const struct dpp_curve_params *key_curve = NULL, *pp_curve = NULL;
 	const char *signed_connector;
 
@@ -2576,8 +2565,8 @@ static int dpp_parse_cred_dpp(struct dpp_authentication *auth,
 
 	ret = 0;
 fail:
-	crypto_ec_key_deinit(csign_pub);
-	crypto_ec_key_deinit(pp_pub);
+	EVP_PKEY_free(csign_pub);
+	EVP_PKEY_free(pp_pub);
 	os_free(info.payload);
 	return ret;
 }
@@ -2602,7 +2591,7 @@ static int dpp_parse_cred_dot1x(struct dpp_authentication *auth,
 		return -1;
 	}
 	wpa_hexdump_buf(MSG_MSGDUMP, "DPP: Received certBag", conf->certbag);
-	conf->certs = crypto_pkcs7_get_certificates(conf->certbag);
+	conf->certs = dpp_pkcs7_certs(conf->certbag);
 	if (!conf->certs) {
 		dpp_auth_fail(auth, "No certificates in certBag");
 		return -1;
@@ -3410,11 +3399,11 @@ void dpp_configurator_free(struct dpp_configurator *conf)
 {
 	if (!conf)
 		return;
-	crypto_ec_key_deinit(conf->csign);
+	EVP_PKEY_free(conf->csign);
 	os_free(conf->kid);
 	os_free(conf->connector);
-	crypto_ec_key_deinit(conf->connector_key);
-	crypto_ec_key_deinit(conf->pp_key);
+	EVP_PKEY_free(conf->connector_key);
+	EVP_PKEY_free(conf->pp_key);
 	os_free(conf);
 }
 
@@ -3422,19 +3411,23 @@ void dpp_configurator_free(struct dpp_configurator *conf)
 int dpp_configurator_get_key(const struct dpp_configurator *conf, char *buf,
 			     size_t buflen)
 {
-	struct wpabuf *key;
-	int ret = -1;
+	EC_KEY *eckey;
+	int key_len, ret = -1;
+	unsigned char *key = NULL;
 
 	if (!conf->csign)
 		return -1;
 
-	key = crypto_ec_key_get_ecprivate_key(conf->csign, true);
-	if (!key)
+	eckey = EVP_PKEY_get1_EC_KEY(conf->csign);
+	if (!eckey)
 		return -1;
 
-	ret = wpa_snprintf_hex(buf, buflen, wpabuf_head(key), wpabuf_len(key));
+	key_len = i2d_ECPrivateKey(eckey, &key);
+	if (key_len > 0)
+		ret = wpa_snprintf_hex(buf, buflen, key, key_len);
 
-	wpabuf_clear_free(key);
+	EC_KEY_free(eckey);
+	OPENSSL_free(key);
 	return ret;
 }
 
@@ -3446,7 +3439,7 @@ static int dpp_configurator_gen_kid(struct dpp_configurator *conf)
 	size_t len[1];
 	int res;
 
-	csign_pub = crypto_ec_key_get_pubkey_point(conf->csign, 1);
+	csign_pub = dpp_get_pubkey_point(conf->csign, 1);
 	if (!csign_pub) {
 		wpa_printf(MSG_INFO, "DPP: Failed to extract C-sign-key");
 		return -1;
@@ -3682,7 +3675,7 @@ dpp_peer_intro(struct dpp_introduction *intro, const char *own_connector,
 	struct json_token *root = NULL, *netkey, *token;
 	struct json_token *own_root = NULL;
 	enum dpp_status_error ret = 255, res;
-	struct crypto_ec_key *own_key = NULL, *peer_key = NULL;
+	EVP_PKEY *own_key = NULL, *peer_key = NULL;
 	struct wpabuf *own_key_pub = NULL;
 	const struct dpp_curve_params *curve, *own_curve;
 	struct dpp_signed_connector_info info;
@@ -3740,14 +3733,6 @@ dpp_peer_intro(struct dpp_introduction *intro, const char *own_connector,
 		}
 	}
 
-#ifdef CONFIG_DPP3
-	token = json_get_member(root, "version");
-	if (token && token->type == JSON_NUMBER) {
-		wpa_printf(MSG_DEBUG, "DPP: version = %d", token->number);
-		intro->peer_version = token->number;
-	}
-#endif /* CONFIG_DPP3 */
-
 	netkey = json_get_member(root, "netAccessKey");
 	if (!netkey || netkey->type != JSON_OBJECT) {
 		wpa_printf(MSG_DEBUG, "DPP: No netAccessKey object found");
@@ -3796,33 +3781,13 @@ fail:
 		os_memset(intro, 0, sizeof(*intro));
 	os_memset(Nx, 0, sizeof(Nx));
 	os_free(info.payload);
-	crypto_ec_key_deinit(own_key);
+	EVP_PKEY_free(own_key);
 	wpabuf_free(own_key_pub);
-	crypto_ec_key_deinit(peer_key);
+	EVP_PKEY_free(peer_key);
 	json_free(root);
 	json_free(own_root);
 	return ret;
 }
-
-
-#ifdef CONFIG_DPP3
-int dpp_get_connector_version(const char *connector)
-{
-	struct json_token *root, *token;
-	int ver = -1;
-
-	root = dpp_parse_own_connector(connector);
-	if (!root)
-		return -1;
-
-	token = json_get_member(root, "version");
-	if (token && token->type == JSON_NUMBER)
-		ver = token->number;
-
-	json_free(root);
-	return ver;
-}
-#endif /* CONFIG_DPP3 */
 
 
 unsigned int dpp_next_id(struct dpp_global *dpp)
@@ -4169,7 +4134,7 @@ static int dpp_nfc_update_bi_key(struct dpp_bootstrap_info *own_bi,
 	wpa_printf(MSG_DEBUG,
 		   "DPP: Update own bootstrapping key to match peer curve from NFC handover");
 
-	crypto_ec_key_deinit(own_bi->pubkey);
+	EVP_PKEY_free(own_bi->pubkey);
 	own_bi->pubkey = NULL;
 
 	if (dpp_keygen(own_bi, peer_bi->curve->name, NULL, 0) < 0 ||
@@ -4315,24 +4280,33 @@ int dpp_configurator_from_backup(struct dpp_global *dpp,
 				 struct dpp_asymmetric_key *key)
 {
 	struct dpp_configurator *conf;
-	const struct dpp_curve_params *curve, *curve_pp;
+	const EC_KEY *eckey, *eckey_pp;
+	const EC_GROUP *group, *group_pp;
+	int nid;
+	const struct dpp_curve_params *curve;
 
 	if (!key->csign || !key->pp_key)
 		return -1;
-
-	curve = dpp_get_curve_ike_group(crypto_ec_key_group(key->csign));
+	eckey = EVP_PKEY_get0_EC_KEY(key->csign);
+	if (!eckey)
+		return -1;
+	group = EC_KEY_get0_group(eckey);
+	if (!group)
+		return -1;
+	nid = EC_GROUP_get_curve_name(group);
+	curve = dpp_get_curve_nid(nid);
 	if (!curve) {
 		wpa_printf(MSG_INFO, "DPP: Unsupported group in c-sign-key");
 		return -1;
 	}
-
-	curve_pp = dpp_get_curve_ike_group(crypto_ec_key_group(key->pp_key));
-	if (!curve_pp) {
-		wpa_printf(MSG_INFO, "DPP: Unsupported group in ppKey");
+	eckey_pp = EVP_PKEY_get0_EC_KEY(key->pp_key);
+	if (!eckey_pp)
 		return -1;
-	}
-
-	if (curve != curve_pp) {
+	group_pp = EC_KEY_get0_group(eckey_pp);
+	if (!group_pp)
+		return -1;
+	if (EC_GROUP_get_curve_name(group) !=
+	    EC_GROUP_get_curve_name(group_pp)) {
 		wpa_printf(MSG_INFO,
 			   "DPP: Mismatch in c-sign-key and ppKey groups");
 		return -1;
