@@ -8,8 +8,6 @@
 LOCAL_PATH := $(call my-dir)
 PKG_CONFIG ?= pkg-config
 
-$(eval $(call declare-copy-files-license-metadata,external/wpa_supplicant_8/wpa_supplicant,.conf,SPDX-license-identifier-BSD-3-Clause,notice,external/wpa_supplicant_8/LICENSE,))
-
 ifneq ($(BOARD_WPA_SUPPLICANT_DRIVER),)
   CONFIG_DRIVER_$(BOARD_WPA_SUPPLICANT_DRIVER) := y
 endif
@@ -87,7 +85,7 @@ ifeq ($(TARGET_ARCH),arm)
 L_CFLAGS += -mabi=aapcs-linux
 endif
 
-# C++ flags for aidl interface
+# C++ flags for hidl interface
 L_CPPFLAGS := -Wall -Werror
 # TODO: Remove these allowed warnings later.
 L_CPPFLAGS += -Wno-unused-variable -Wno-unused-parameter
@@ -136,7 +134,6 @@ OBJS += src/utils/crc32.c
 OBJS += wmm_ac.c
 OBJS += op_classes.c
 OBJS += rrm.c
-OBJS += twt.c
 OBJS += robust_av.c
 OBJS_p = wpa_passphrase.c
 OBJS_p += src/utils/common.c
@@ -312,9 +309,6 @@ NEED_ASN1=y
 ifdef CONFIG_DPP2
 L_CFLAGS += -DCONFIG_DPP2
 endif
-ifdef CONFIG_DPP3
-L_CFLAGS += -DCONFIG_DPP3
-endif
 endif
 
 ifdef CONFIG_OWE
@@ -406,10 +400,11 @@ CONFIG_AP=y
 ifdef CONFIG_P2P_STRICT
 L_CFLAGS += -DCONFIG_P2P_STRICT
 endif
+endif
+
 ifdef CONFIG_WIFI_DISPLAY
 L_CFLAGS += -DCONFIG_WIFI_DISPLAY
 OBJS += wifi_display.c
-endif
 endif
 
 ifdef CONFIG_PASN
@@ -1528,9 +1523,10 @@ endif
 L_CFLAGS += $(DBUS_INCLUDE)
 endif
 
-ifdef CONFIG_CTRL_IFACE_AIDL
-WPA_SUPPLICANT_USE_AIDL=y
-L_CFLAGS += -DCONFIG_AIDL -DCONFIG_CTRL_IFACE_AIDL
+ifdef CONFIG_CTRL_IFACE_HIDL
+WPA_SUPPLICANT_USE_HIDL=y
+L_CFLAGS += -DCONFIG_HIDL -DCONFIG_CTRL_IFACE_HIDL
+HIDL_INTERFACE_VERSION := 1.4
 endif
 
 ifdef CONFIG_READLINE
@@ -1742,7 +1738,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := wpa_cli
 LOCAL_LICENSE_KINDS := SPDX-license-identifier-BSD SPDX-license-identifier-BSD-3-Clause SPDX-license-identifier-ISC legacy_unencumbered
 LOCAL_LICENSE_CONDITIONS := notice unencumbered
-LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../LICENSE
+LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../COPYING $(LOCAL_PATH)/../NOTICE
 LOCAL_PROPRIETARY_MODULE := true
 LOCAL_SHARED_LIBRARIES := libc libcutils liblog
 LOCAL_CFLAGS := $(L_CFLAGS)
@@ -1755,7 +1751,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := wpa_supplicant
 LOCAL_LICENSE_KINDS := SPDX-license-identifier-BSD SPDX-license-identifier-BSD-3-Clause SPDX-license-identifier-ISC legacy_unencumbered
 LOCAL_LICENSE_CONDITIONS := notice unencumbered
-LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../LICENSE
+LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../COPYING $(LOCAL_PATH)/../NOTICE
 LOCAL_PROPRIETARY_MODULE := true
 LOCAL_MODULE_RELATIVE_PATH := hw
 ifdef CONFIG_DRIVER_CUSTOM
@@ -1790,14 +1786,17 @@ LOCAL_C_INCLUDES := $(INCLUDES)
 ifeq ($(DBUS), y)
 LOCAL_SHARED_LIBRARIES += libdbus
 endif
-ifeq ($(WPA_SUPPLICANT_USE_AIDL), y)
-LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant-V1-ndk
-LOCAL_SHARED_LIBRARIES += libutils libbase
-LOCAL_SHARED_LIBRARIES += libbinder_ndk
-LOCAL_STATIC_LIBRARIES += libwpa_aidl
-LOCAL_VINTF_FRAGMENTS := aidl/android.hardware.wifi.supplicant.xml
+ifeq ($(WPA_SUPPLICANT_USE_HIDL), y)
+LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.0
+LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.1
+LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.2
+LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.3
+LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.4
+LOCAL_SHARED_LIBRARIES += libhidlbase libutils libbase
+LOCAL_STATIC_LIBRARIES += libwpa_hidl
+LOCAL_VINTF_FRAGMENTS := hidl/$(HIDL_INTERFACE_VERSION)/android.hardware.wifi.supplicant.xml
 ifeq ($(WIFI_HIDL_UNIFIED_SUPPLICANT_SERVICE_RC_ENTRY), true)
-LOCAL_INIT_RC=aidl/android.hardware.wifi.supplicant-service.rc
+LOCAL_INIT_RC=hidl/$(HIDL_INTERFACE_VERSION)/android.hardware.wifi.supplicant-service.rc
 endif
 endif
 include $(BUILD_EXECUTABLE)
@@ -1832,7 +1831,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE = libwpa_client
 LOCAL_LICENSE_KINDS := SPDX-license-identifier-BSD SPDX-license-identifier-BSD-3-Clause SPDX-license-identifier-ISC legacy_unencumbered
 LOCAL_LICENSE_CONDITIONS := notice unencumbered
-LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../LICENSE
+LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../COPYING $(LOCAL_PATH)/../NOTICE
 LOCAL_PROPRIETARY_MODULE := true
 LOCAL_CFLAGS = $(L_CFLAGS)
 LOCAL_SRC_FILES = src/common/wpa_ctrl.c src/utils/os_$(CONFIG_OS).c
@@ -1841,35 +1840,39 @@ LOCAL_SHARED_LIBRARIES := libcutils liblog
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)/wpa_client_include $(LOCAL_PATH)/wpa_client_include/libwpa_client
 include $(BUILD_SHARED_LIBRARY)
 
-ifeq ($(WPA_SUPPLICANT_USE_AIDL), y)
-### Aidl service library ###
+ifeq ($(WPA_SUPPLICANT_USE_HIDL), y)
+### Hidl service library ###
 ########################
 include $(CLEAR_VARS)
-LOCAL_MODULE := libwpa_aidl
+LOCAL_MODULE := libwpa_hidl
 LOCAL_LICENSE_KINDS := SPDX-license-identifier-BSD SPDX-license-identifier-BSD-3-Clause SPDX-license-identifier-ISC legacy_unencumbered
 LOCAL_LICENSE_CONDITIONS := notice unencumbered
-LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../LICENSE
+LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../COPYING $(LOCAL_PATH)/../NOTICE
 LOCAL_VENDOR_MODULE := true
 LOCAL_CPPFLAGS := $(L_CPPFLAGS)
 LOCAL_CFLAGS := $(L_CFLAGS)
 LOCAL_C_INCLUDES := $(INCLUDES)
 LOCAL_SRC_FILES := \
-    aidl/aidl.cpp \
-    aidl/aidl_manager.cpp \
-    aidl/iface_config_utils.cpp \
-    aidl/p2p_iface.cpp \
-    aidl/p2p_network.cpp \
-    aidl/sta_iface.cpp \
-    aidl/sta_network.cpp \
-    aidl/supplicant.cpp
+    hidl/$(HIDL_INTERFACE_VERSION)/hidl.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/hidl_manager.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/iface_config_utils.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/p2p_iface.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/p2p_network.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/sta_iface.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/sta_network.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/supplicant.cpp
 LOCAL_SHARED_LIBRARIES := \
-    android.hardware.wifi.supplicant-V1-ndk \
-    libbinder_ndk \
+    android.hardware.wifi.supplicant@1.0 \
+    android.hardware.wifi.supplicant@1.1 \
+    android.hardware.wifi.supplicant@1.2 \
+    android.hardware.wifi.supplicant@1.3 \
+    android.hardware.wifi.supplicant@1.4 \
     libbase \
+    libhidlbase \
     libutils \
     liblog \
     libssl
 LOCAL_EXPORT_C_INCLUDE_DIRS := \
-    $(LOCAL_PATH)/aidl
+    $(LOCAL_PATH)/hidl/$(HIDL_INTERFACE_VERSION)
 include $(BUILD_STATIC_LIBRARY)
-endif # WPA_SUPPLICANT_USE_AIDL == y
+endif # WPA_SUPPLICANT_USE_HIDL == y
