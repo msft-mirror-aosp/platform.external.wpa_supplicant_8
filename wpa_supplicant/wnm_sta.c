@@ -1097,8 +1097,6 @@ static void wnm_bss_tm_connect(struct wpa_supplicant *wpa_s,
 			       struct wpa_bss *bss, struct wpa_ssid *ssid,
 			       int after_new_scan)
 {
-	struct wpa_radio_work *already_connecting;
-
 	wpa_dbg(wpa_s, MSG_DEBUG,
 		"WNM: Transition to BSS " MACSTR
 		" based on BSS Transition Management Request (old BSSID "
@@ -1123,18 +1121,9 @@ static void wnm_bss_tm_connect(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
-	already_connecting = radio_work_pending(wpa_s, "sme-connect");
 	wpa_s->reassociate = 1;
 	wpa_printf(MSG_DEBUG, "WNM: Issuing connect");
 	wpa_supplicant_connect(wpa_s, bss, ssid);
-
-	/*
-	 * Indicate that a BSS transition is in progress so scan results that
-	 * come in before the 'sme-connect' radio work gets executed do not
-	 * override the original connection attempt.
-	 */
-	if (!already_connecting && radio_work_pending(wpa_s, "sme-connect"))
-		wpa_s->bss_trans_mgmt_in_progress = true;
 	wnm_deallocate_memory(wpa_s);
 }
 
@@ -1354,11 +1343,11 @@ static int wnm_fetch_scan_results(struct wpa_supplicant *wpa_s)
 				continue;
 			bss = wpa_s->current_bss;
 			ssid_ie = wpa_scan_get_ie(res, WLAN_EID_SSID);
-			if (bss && ssid_ie && ssid_ie[1] &&
+			if (bss && ssid_ie &&
 			    (bss->ssid_len != ssid_ie[1] ||
 			     os_memcmp(bss->ssid, ssid_ie + 2,
 				       bss->ssid_len) != 0))
-				continue; /* Skip entries for other ESSs */
+				continue;
 
 			/* Potential candidate found */
 			found = 1;
