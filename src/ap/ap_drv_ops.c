@@ -888,8 +888,7 @@ static void hostapd_get_hw_mode_any_channels(struct hostapd_data *hapd,
 			continue;
 		if (!(chan->flag & HOSTAPD_CHAN_DISABLED) &&
 		    !(hapd->iface->conf->acs_exclude_dfs &&
-		      (chan->flag & HOSTAPD_CHAN_RADAR)) &&
-		    !(chan->max_tx_power < hapd->iface->conf->min_tx_power))
+		      (chan->flag & HOSTAPD_CHAN_RADAR)))
 			int_array_add_unique(freq_list, chan->freq);
 	}
 }
