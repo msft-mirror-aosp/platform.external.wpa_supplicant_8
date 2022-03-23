@@ -490,9 +490,9 @@ int os_file_exists(const char *fname)
 int os_fdatasync(FILE *stream)
 {
 	if (!fflush(stream)) {
-#if defined __FreeBSD__ || defined __linux__
+#ifdef __linux__
 		return fdatasync(fileno(stream));
-#else /* !__linux__ && !__FreeBSD__ */
+#else /* !__linux__ */
 #ifdef F_FULLFSYNC
 		/* OS X does not implement fdatasync(). */
 		return fcntl(fileno(stream), F_FULLFSYNC);
