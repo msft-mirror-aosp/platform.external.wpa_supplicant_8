@@ -95,9 +95,8 @@ struct wpa_state_machine {
 #endif /* CONFIG_IEEE80211R_AP */
 	unsigned int is_wnmsleep:1;
 	unsigned int pmkid_set:1;
-
 #ifdef CONFIG_OCV
-	int ocv_enabled;
+	unsigned int ocv_enabled:1;
 #endif /* CONFIG_OCV */
 
 	u8 req_replay_counter[WPA_REPLAY_COUNTER_LEN];
@@ -278,8 +277,7 @@ int wpa_write_rsnxe(struct wpa_auth_config *conf, u8 *buf, size_t len);
 void wpa_auth_logger(struct wpa_authenticator *wpa_auth, const u8 *addr,
 		     logger_level level, const char *txt);
 void wpa_auth_vlogger(struct wpa_authenticator *wpa_auth, const u8 *addr,
-		      logger_level level, const char *fmt, ...)
-	PRINTF_FORMAT(4, 5);
+		      logger_level level, const char *fmt, ...);
 void __wpa_send_eapol(struct wpa_authenticator *wpa_auth,
 		      struct wpa_state_machine *sm, int key_info,
 		      const u8 *key_rsc, const u8 *nonce,

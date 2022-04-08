@@ -272,8 +272,7 @@ pmksa_cache_add_entry(struct rsn_pmksa_cache *pmksa,
 			 entry->fils_cache_id_set ? entry->fils_cache_id : NULL,
 			 entry->pmk, entry->pmk_len,
 			 pmksa->sm->dot11RSNAConfigPMKLifetime,
-			 pmksa->sm->dot11RSNAConfigPMKReauthThreshold,
-			 entry->akmp);
+			 pmksa->sm->dot11RSNAConfigPMKReauthThreshold);
 
 	return entry;
 }
@@ -489,9 +488,6 @@ void pmksa_cache_clear_current(struct wpa_sm *sm)
 {
 	if (sm == NULL)
 		return;
-	if (sm->cur_pmksa)
-		wpa_printf(MSG_DEBUG,
-			   "RSN: Clear current PMKSA entry selection");
 	sm->cur_pmksa = NULL;
 }
 

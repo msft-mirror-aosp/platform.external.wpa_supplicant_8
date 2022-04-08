@@ -154,8 +154,7 @@ static int wpa_supplicant_add_pmkid(void *wpa_s, void *network_ctx,
 				    const u8 *bssid, const u8 *pmkid,
 				    const u8 *fils_cache_id,
 				    const u8 *pmk, size_t pmk_len,
-				    u32 pmk_lifetime, u8 pmk_reauth_threshold,
-				    int akmp)
+				    u32 pmk_lifetime, u8 pmk_reauth_threshold)
 {
 	printf("%s - not implemented\n", __func__);
 	return -1;
@@ -193,8 +192,10 @@ static void test_eapol_clean(struct wpa_supplicant *wpa_s)
 	pmksa_candidate_free(wpa_s->wpa);
 	wpa_sm_deinit(wpa_s->wpa);
 	scard_deinit(wpa_s->scard);
-	wpa_supplicant_ctrl_iface_deinit(wpa_s, wpa_s->ctrl_iface);
-	wpa_s->ctrl_iface = NULL;
+	if (wpa_s->ctrl_iface) {
+		wpa_supplicant_ctrl_iface_deinit(wpa_s->ctrl_iface);
+		wpa_s->ctrl_iface = NULL;
+	}
 	wpa_config_free(wpa_s->conf);
 }
 

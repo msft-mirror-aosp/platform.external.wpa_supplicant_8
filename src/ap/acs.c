@@ -512,17 +512,6 @@ static int is_in_chanlist(struct hostapd_iface *iface,
 }
 
 
-static int is_in_freqlist(struct hostapd_iface *iface,
-			  struct hostapd_channel_data *chan)
-{
-	if (!iface->conf->acs_freq_list.num)
-		return 1;
-
-	return freq_range_list_includes(&iface->conf->acs_freq_list,
-					chan->freq);
-}
-
-
 static void acs_survey_mode_interference_factor(
 	struct hostapd_iface *iface, struct hostapd_hw_modes *mode)
 {
@@ -536,9 +525,6 @@ static void acs_survey_mode_interference_factor(
 			continue;
 
 		if (!is_in_chanlist(iface, chan))
-			continue;
-
-		if (!is_in_freqlist(iface, chan))
 			continue;
 
 		wpa_printf(MSG_DEBUG, "ACS: Survey analysis for channel %d (%d MHz)",
@@ -663,9 +649,6 @@ acs_find_ideal_chan_mode(struct hostapd_iface *iface,
 			continue;
 
 		if (!is_in_chanlist(iface, chan))
-			continue;
-
-		if (!is_in_freqlist(iface, chan))
 			continue;
 
 		if (!chan_bw_allowed(chan, bw, 1, 1)) {
@@ -1028,9 +1011,6 @@ static int * acs_request_scan_add_freqs(struct hostapd_iface *iface,
 			continue;
 
 		if (!is_in_chanlist(iface, chan))
-			continue;
-
-		if (!is_in_freqlist(iface, chan))
 			continue;
 
 		*freq++ = chan->freq;

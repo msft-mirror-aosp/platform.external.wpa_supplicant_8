@@ -138,10 +138,7 @@ DBusMessage * wpas_dbus_error_no_memory(DBusMessage *message)
 static const char * const dont_quote[] = {
 	"key_mgmt", "proto", "pairwise", "auth_alg", "group", "eap",
 	"bssid", "scan_freq", "freq_list", "scan_ssid", "bssid_hint",
-	"bssid_ignore", "bssid_accept", /* deprecated aliases */
-	"bssid_blacklist", "bssid_whitelist",
-	"group_mgmt",
-	"ignore_broadcast_ssid",
+	"bssid_blacklist", "bssid_whitelist", "group_mgmt",
 #ifdef CONFIG_MESH
 	"mesh_basic_rates",
 #endif /* CONFIG_MESH */
@@ -232,6 +229,8 @@ dbus_bool_t set_network_properties(struct wpa_supplicant *wpa_s,
 		} else if (entry.type == DBUS_TYPE_STRING) {
 			if (should_quote_opt(entry.key)) {
 				size = os_strlen(entry.str_value);
+				if (size == 0)
+					goto error;
 
 				size += 3;
 				value = os_zalloc(size);
@@ -268,28 +267,8 @@ dbus_bool_t set_network_properties(struct wpa_supplicant *wpa_s,
 		} else
 			goto error;
 
-		ret = wpa_config_set(ssid, entry.key, value, 0);
-		if (ret < 0)
+		if (wpa_config_set(ssid, entry.key, value, 0) < 0)
 			goto error;
-		if (ret == 1)
-			goto skip_update;
-
-#ifdef CONFIG_BGSCAN
-		if (os_strcmp(entry.key, "bgscan") == 0) {
-			/*
-			 * Reset the bgscan parameters for the current network
-			 * and continue. There's no need to flush caches for
-			 * bgscan parameter changes.
-			 */
-			if (wpa_s->current_ssid == ssid &&
-			    wpa_s->wpa_state == WPA_COMPLETED)
-				wpa_supplicant_reset_bgscan(wpa_s);
-			os_free(value);
-			value = NULL;
-			wpa_dbus_dict_entry_clear(&entry);
-			continue;
-		}
-#endif /* CONFIG_BGSCAN */
 
 		if (os_strcmp(entry.key, "bssid") != 0 &&
 		    os_strcmp(entry.key, "priority") != 0)
@@ -311,7 +290,6 @@ dbus_bool_t set_network_properties(struct wpa_supplicant *wpa_s,
 		else if (os_strcmp(entry.key, "priority") == 0)
 			wpa_config_update_prio_list(wpa_s->conf);
 
-	skip_update:
 		os_free(value);
 		value = NULL;
 		wpa_dbus_dict_entry_clear(&entry);
@@ -1013,7 +991,7 @@ dbus_bool_t wpas_dbus_getter_global_capabilities(
 	const struct wpa_dbus_property_desc *property_desc,
 	DBusMessageIter *iter, DBusError *error, void *user_data)
 {
-	const char *capabilities[13];
+	const char *capabilities[12];
 	size_t num_items = 0;
 	struct wpa_global *global = user_data;
 	struct wpa_supplicant *wpa_s;
@@ -1064,9 +1042,6 @@ dbus_bool_t wpas_dbus_getter_global_capabilities(
 #ifdef CONFIG_OWE
 	capabilities[num_items++] = "owe";
 #endif /* CONFIG_OWE */
-#ifdef CONFIG_SUITEB192
-	capabilities[num_items++] = "suiteb192";
-#endif /* CONFIG_SUITEB192 */
 	if (ext_key_id_supported)
 		capabilities[num_items++] = "extended_key_id";
 
@@ -1702,8 +1677,7 @@ DBusMessage * wpas_dbus_handler_reassociate(DBusMessage *message,
  * Returns: NULL
  *
  * Handler function for notifying system there will be a expected disconnect.
- * This will prevent wpa_supplicant from adding the BSSID to the ignore list
- * upon next disconnect.
+ * This will prevent wpa_supplicant from adding blacklists upon next disconnect..
  */
 DBusMessage * wpas_dbus_handler_expect_disconnect(DBusMessage *message,
 						  struct wpa_global *global)
@@ -1823,6 +1797,25 @@ out:
 }
 
 
+static void remove_network(void *arg, struct wpa_ssid *ssid)
+{
+	struct wpa_supplicant *wpa_s = arg;
+
+	wpas_notify_network_removed(wpa_s, ssid);
+
+	if (wpa_config_remove_network(wpa_s->conf, ssid->id) < 0) {
+		wpa_printf(MSG_ERROR,
+			   "%s[dbus]: error occurred when removing network %d",
+			   __func__, ssid->id);
+		return;
+	}
+
+	if (ssid == wpa_s->current_ssid)
+		wpa_supplicant_deauthenticate(wpa_s,
+					      WLAN_REASON_DEAUTH_LEAVING);
+}
+
+
 /**
  * wpas_dbus_handler_remove_all_networks - Remove all configured networks
  * @message: Pointer to incoming dbus message
@@ -1834,8 +1827,11 @@ out:
 DBusMessage * wpas_dbus_handler_remove_all_networks(
 	DBusMessage *message, struct wpa_supplicant *wpa_s)
 {
+	if (wpa_s->sched_scanning)
+		wpa_supplicant_cancel_sched_scan(wpa_s);
+
 	/* NB: could check for failure and return an error */
-	wpa_supplicant_remove_all_networks(wpa_s);
+	wpa_config_foreach_network(wpa_s->conf, remove_network, wpa_s);
 	return NULL;
 }
 
@@ -1959,55 +1955,6 @@ out:
 #endif /* IEEE8021X_EAPOL */
 }
 
-
-/**
- * wpas_dbus_handler_roam - Initiate a roam to another BSS within the ESS
- * @message: Pointer to incoming dbus message
- * @wpa_s: wpa_supplicant structure for a network interface
- * Returns: NULL on success or dbus error on failure
- *
- * Handler function for "Roam" method call of network interface.
- */
-DBusMessage * wpas_dbus_handler_roam(DBusMessage *message,
-				     struct wpa_supplicant *wpa_s)
-{
-#ifdef CONFIG_NO_SCAN_PROCESSING
-	return wpas_dbus_error_unknown_error(message,
-					     "scan processing not included");
-#else /* CONFIG_NO_SCAN_PROCESSING */
-	u8 bssid[ETH_ALEN];
-	struct wpa_bss *bss;
-	struct wpa_ssid *ssid = wpa_s->current_ssid;
-	char *addr;
-
-	if (!dbus_message_get_args(message, NULL, DBUS_TYPE_STRING, &addr,
-				   DBUS_TYPE_INVALID))
-		return wpas_dbus_error_invalid_args(message, NULL);
-
-	if (hwaddr_aton(addr, bssid))
-		return wpas_dbus_error_invalid_args(
-			message, "Invalid hardware address format");
-
-	wpa_printf(MSG_DEBUG, "dbus: Roam " MACSTR, MAC2STR(bssid));
-
-	if (!ssid)
-		return dbus_message_new_error(
-			message, WPAS_DBUS_ERROR_NOT_CONNECTED,
-			"This interface is not connected");
-
-	bss = wpa_bss_get(wpa_s, bssid, ssid->ssid, ssid->ssid_len);
-	if (!bss) {
-		wpa_printf(MSG_DEBUG, "dbus: Roam: Target BSS not found");
-		return wpas_dbus_error_invalid_args(
-			message, "Target BSS not found");
-	}
-
-	wpa_s->reassociate = 1;
-	wpa_supplicant_connect(wpa_s, bss, ssid);
-
-	return NULL;
-#endif /* CONFIG_NO_SCAN_PROCESSING */
-}
 
 #ifndef CONFIG_NO_CONFIG_BLOBS
 
@@ -2574,7 +2521,7 @@ wpas_dbus_handler_tdls_cancel_channel_switch(DBusMessage *message,
  * wpas_dbus_handler_save_config - Save configuration to configuration file
  * @message: Pointer to incoming dbus message
  * @wpa_s: wpa_supplicant structure for a network interface
- * Returns: NULL on Success, Otherwise error message
+ * Returns: NULL on Success, Otherwise errror message
  *
  * Handler function for "SaveConfig" method call of network interface.
  */
@@ -2874,12 +2821,6 @@ dbus_bool_t wpas_dbus_getter_capabilities(
 		    !wpa_dbus_dict_string_array_add_element(&iter_array, "sae"))
 			goto nomem;
 #endif /* CONFIG_SAE */
-
-#ifdef CONFIG_OWE
-		if ((capa.key_mgmt & WPA_DRIVER_CAPA_KEY_MGMT_OWE) &&
-		    !wpa_dbus_dict_string_array_add_element(&iter_array, "owe"))
-			goto nomem;
-#endif /* CONFIG_OWE */
 
 		if (!wpa_dbus_dict_end_string_array(&iter_dict,
 						    &iter_dict_entry,
@@ -3693,43 +3634,6 @@ dbus_bool_t wpas_dbus_getter_bridge_ifname(
 }
 
 
-dbus_bool_t wpas_dbus_setter_bridge_ifname(
-	const struct wpa_dbus_property_desc *property_desc,
-	DBusMessageIter *iter, DBusError *error, void *user_data)
-{
-	struct wpa_supplicant *wpa_s = user_data;
-	const char *bridge_ifname = NULL;
-	const char *msg;
-	int r;
-
-	if (!wpas_dbus_simple_property_setter(iter, error, DBUS_TYPE_STRING,
-					      &bridge_ifname))
-		return FALSE;
-
-	r = wpa_supplicant_update_bridge_ifname(wpa_s, bridge_ifname);
-	if (r != 0) {
-		switch (r) {
-		case -EINVAL:
-			msg = "invalid interface name";
-			break;
-		case -EBUSY:
-			msg = "interface is busy";
-			break;
-		case -EIO:
-			msg = "socket error";
-			break;
-		default:
-			msg = "unknown error";
-			break;
-		}
-		dbus_set_error_const(error, DBUS_ERROR_FAILED, msg);
-		return FALSE;
-	}
-
-	return TRUE;
-}
-
-
 /**
  * wpas_dbus_getter_config_file - Get interface configuration file path
  * @iter: Pointer to incoming dbus message iter
@@ -4037,15 +3941,14 @@ dbus_bool_t wpas_dbus_setter_iface_global(
 		return FALSE;
 	}
 
-	ret = wpa_config_process_global(wpa_s->conf, buf, -1);
-	if (ret < 0) {
+	if (wpa_config_process_global(wpa_s->conf, buf, -1)) {
 		dbus_set_error(error, DBUS_ERROR_INVALID_ARGS,
 			       "Failed to set interface property %s",
 			       property_desc->dbus_property);
 		return FALSE;
-	} else if (ret == 0) {
-		wpa_supplicant_update_config(wpa_s);
 	}
+
+	wpa_supplicant_update_config(wpa_s);
 	return TRUE;
 }
 
@@ -5085,8 +4988,8 @@ dbus_bool_t wpas_dbus_getter_bss_ies(
 		return FALSE;
 
 	return wpas_dbus_simple_array_property_getter(iter, DBUS_TYPE_BYTE,
-						      wpa_bss_ie_ptr(res),
-						      res->ie_len, error);
+						      res + 1, res->ie_len,
+						      error);
 }
 
 

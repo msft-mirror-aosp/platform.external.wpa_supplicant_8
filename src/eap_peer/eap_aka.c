@@ -442,28 +442,19 @@ static int eap_aka_learn_ids(struct eap_sm *sm, struct eap_aka_data *data,
 
 
 static int eap_aka_add_id_msg(struct eap_aka_data *data,
-			      const struct wpabuf *msg1,
-			      const struct wpabuf *msg2)
+			      const struct wpabuf *msg)
 {
-	size_t len;
-
-	if (!msg1)
+	if (msg == NULL)
 		return -1;
-	len = wpabuf_len(msg1);
-	if (msg2)
-		len += wpabuf_len(msg2);
 
-	if (!data->id_msgs) {
-		data->id_msgs = wpabuf_alloc(len);
-		if (!data->id_msgs)
-			return -1;
-	} else if (wpabuf_resize(&data->id_msgs, len) < 0) {
-		return -1;
+	if (data->id_msgs == NULL) {
+		data->id_msgs = wpabuf_dup(msg);
+		return data->id_msgs == NULL ? -1 : 0;
 	}
 
-	wpabuf_put_buf(data->id_msgs, msg1);
-	if (msg2)
-		wpabuf_put_buf(data->id_msgs, msg2);
+	if (wpabuf_resize(&data->id_msgs, wpabuf_len(msg)) < 0)
+		return -1;
+	wpabuf_put_buf(data->id_msgs, msg);
 
 	return 0;
 }
@@ -808,13 +799,8 @@ static struct wpabuf * eap_aka_process_identity(struct eap_sm *sm,
 	buf = eap_aka_response_identity(sm, data, id, attr->id_req);
 
 	if (data->prev_id != id) {
-		if (eap_aka_add_id_msg(data, reqData, buf) < 0) {
-			wpa_printf(MSG_INFO,
-				   "EAP-AKA: Failed to store ID messages");
-			wpabuf_free(buf);
-			return eap_aka_client_error(
-				data, id, EAP_AKA_UNABLE_TO_PROCESS_PACKET);
-		}
+		eap_aka_add_id_msg(data, reqData);
+		eap_aka_add_id_msg(data, buf);
 		data->prev_id = id;
 	}
 

@@ -533,14 +533,11 @@ static int mesh_mpm_plink_close(struct hostapd_data *hapd, struct sta_info *sta,
 	int reason = WLAN_REASON_MESH_PEERING_CANCELLED;
 
 	if (sta) {
-		if (sta->plink_state == PLINK_ESTAB)
-			hapd->num_plinks--;
 		wpa_mesh_set_plink_state(wpa_s, sta, PLINK_HOLDING);
 		mesh_mpm_send_plink_action(wpa_s, sta, PLINK_CLOSE, reason);
 		wpa_printf(MSG_DEBUG, "MPM closing plink sta=" MACSTR,
 			   MAC2STR(sta->addr));
 		eloop_cancel_timeout(plink_timer, wpa_s, sta);
-		eloop_cancel_timeout(mesh_auth_timer, wpa_s, sta);
 		return 0;
 	}
 
@@ -1293,8 +1290,8 @@ void mesh_mpm_action_rx(struct wpa_supplicant *wpa_s,
 
 			if (ocv_verify_tx_params(elems.oci, elems.oci_len, &ci,
 						 tx_chanwidth, tx_seg1_idx) !=
-			    OCI_SUCCESS) {
-				wpa_printf(MSG_WARNING, "MPM: OCV failed: %s",
+			    0) {
+				wpa_printf(MSG_WARNING, "MPM: %s",
 					   ocv_errorstr);
 				return;
 			}
