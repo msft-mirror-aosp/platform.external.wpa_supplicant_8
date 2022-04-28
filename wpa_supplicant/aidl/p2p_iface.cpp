@@ -46,6 +46,7 @@ std::function<void()> pending_scan_res_join_callback = NULL;
 using aidl::android::hardware::wifi::supplicant::ISupplicantP2pIface;
 using aidl::android::hardware::wifi::supplicant::ISupplicantStaNetwork;
 using aidl::android::hardware::wifi::supplicant::MiracastMode;
+using aidl::android::hardware::wifi::supplicant::P2pFrameTypeMask;
 
 uint8_t convertAidlMiracastModeToInternal(
 	MiracastMode mode)
@@ -438,6 +439,11 @@ int joinScanReq(
 	return ret;
 }
 
+static bool is6GhzAllowed(struct wpa_supplicant *wpa_s) {
+	if (!wpa_s->global->p2p) return false;
+	return wpa_s->global->p2p->allow_6ghz;
+}
+
 int joinGroup(
 	struct wpa_supplicant* wpa_s,
 	uint8_t *group_owner_bssid,
@@ -464,7 +470,7 @@ int joinGroup(
 
 	if (wpas_p2p_group_add_persistent(
 		wpa_s, wpa_network, 0, 0, 0, 0, ht40, vht,
-		CHANWIDTH_USE_HT, he, 0, NULL, 0, 0)) {
+		CHANWIDTH_USE_HT, he, 0, NULL, 0, 0, is6GhzAllowed(wpa_s))) {
 		ret = -1;
 	}
 
@@ -505,6 +511,53 @@ void scanResJoinIgnore(struct wpa_supplicant *wpa_s, struct wpa_scan_results *sc
 
 }
 
+static void updateP2pVendorElem(struct wpa_supplicant* wpa_s, enum wpa_vendor_elem_frame frameType,
+	const std::vector<uint8_t>& vendorElemBytes) {
+
+	wpa_printf(MSG_INFO, "Set vendor elements to frames %d", frameType);
+	struct wpa_supplicant* vendor_elem_wpa_s = wpas_vendor_elem(wpa_s, frameType);
+	if (vendor_elem_wpa_s->vendor_elem[frameType]) {
+		wpabuf_free(vendor_elem_wpa_s->vendor_elem[frameType]);
+		vendor_elem_wpa_s->vendor_elem[frameType] = NULL;
+	}
+	if (vendorElemBytes.size() > 0) {
+		vendor_elem_wpa_s->vendor_elem[frameType] =
+			wpabuf_alloc_copy(vendorElemBytes.data(), vendorElemBytes.size());
+	}
+	wpas_vendor_elem_update(vendor_elem_wpa_s);
+}
+
+uint32_t convertWpaP2pFrameTypeToHalP2pFrameTypeBit(int frameType) {
+	switch (frameType) {
+	case VENDOR_ELEM_PROBE_REQ_P2P:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_PROBE_REQ_P2P);
+	case VENDOR_ELEM_PROBE_RESP_P2P:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_PROBE_RESP_P2P);
+	case VENDOR_ELEM_PROBE_RESP_P2P_GO:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_PROBE_RESP_P2P_GO);
+	case VENDOR_ELEM_BEACON_P2P_GO:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_BEACON_P2P_GO);
+	case VENDOR_ELEM_P2P_PD_REQ:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_PD_REQ);
+	case VENDOR_ELEM_P2P_PD_RESP:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_PD_RESP);
+	case VENDOR_ELEM_P2P_GO_NEG_REQ:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_GO_NEG_REQ);
+	case VENDOR_ELEM_P2P_GO_NEG_RESP:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_GO_NEG_RESP);
+	case VENDOR_ELEM_P2P_GO_NEG_CONF:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_GO_NEG_CONF);
+	case VENDOR_ELEM_P2P_INV_REQ:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_INV_REQ);
+	case VENDOR_ELEM_P2P_INV_RESP:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_INV_RESP);
+	case VENDOR_ELEM_P2P_ASSOC_REQ:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_ASSOC_REQ);
+	case VENDOR_ELEM_P2P_ASSOC_RESP:
+		return static_cast<uint32_t>(P2pFrameTypeMask::P2P_FRAME_P2P_ASSOC_RESP);
+	}
+	return 0;
+}
 }  // namespace
 
 namespace aidl {
@@ -1044,6 +1097,15 @@ ndk::ScopedAStatus P2pIface::addGroup(
 		in_freq, in_timeoutInSec);
 }
 
+::ndk::ScopedAStatus P2pIface::setVendorElements(
+	P2pFrameTypeMask in_frameTypeMask,
+	const std::vector<uint8_t>& in_vendorElemBytes)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_IFACE_INVALID,
+		&P2pIface::setVendorElementsInternal, in_frameTypeMask, in_vendorElemBytes);
+}
+
 std::pair<std::string, ndk::ScopedAStatus> P2pIface::getNameInternal()
 {
 	return {ifname_, ndk::ScopedAStatus::ok()};
@@ -1181,7 +1243,7 @@ ndk::ScopedAStatus P2pIface::findInternal(uint32_t timeout_in_sec)
 	uint32_t search_delay = wpas_p2p_search_delay(wpa_s);
 	if (wpas_p2p_find(
 		wpa_s, timeout_in_sec, P2P_FIND_START_WITH_FULL, 0, nullptr,
-		nullptr, search_delay, 0, nullptr, 0)) {
+		nullptr, search_delay, 0, nullptr, 0, is6GhzAllowed(wpa_s))) {
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
 	return ndk::ScopedAStatus::ok();
@@ -1249,7 +1311,7 @@ std::pair<std::string, ndk::ScopedAStatus> P2pIface::connectInternal(
 	int new_pin = wpas_p2p_connect(
 		wpa_s, peer_address.data(), pin, wps_method, persistent, auto_join,
 		join_existing_group, false, go_intent_signed, 0, 0, -1, false, ht40,
-		vht, CHANWIDTH_USE_HT, he, 0, nullptr, 0);
+		vht, CHANWIDTH_USE_HT, he, 0, nullptr, 0, is6GhzAllowed(wpa_s));
 	if (new_pin < 0) {
 		return {"", createStatus(SupplicantStatusCode::FAILURE_UNKNOWN)};
 	}
@@ -1336,7 +1398,7 @@ ndk::ScopedAStatus P2pIface::inviteInternal(
 	struct wpa_supplicant* wpa_s = retrieveIfacePtr();
 	if (wpas_p2p_invite_group(
 		wpa_s, group_ifname.c_str(), peer_address.data(),
-		go_device_address.data())) {
+		go_device_address.data(), is6GhzAllowed(wpa_s))) {
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
 	return ndk::ScopedAStatus::ok();
@@ -1357,7 +1419,7 @@ ndk::ScopedAStatus P2pIface::reinvokeInternal(
 	}
 	if (wpas_p2p_invite(
 		wpa_s, peer_address.data(), ssid, NULL, 0, 0, ht40, vht,
-		CHANWIDTH_USE_HT, 0, he, 0)) {
+		CHANWIDTH_USE_HT, 0, he, 0, is6GhzAllowed(wpa_s))) {
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
 	return ndk::ScopedAStatus::ok();
@@ -1799,7 +1861,7 @@ ndk::ScopedAStatus P2pIface::addGroupInternal(
 	if (ssid == NULL) {
 		if (wpas_p2p_group_add(
 			wpa_s, persistent, 0, 0, ht40, vht,
-			CHANWIDTH_USE_HT, he, 0)) {
+			CHANWIDTH_USE_HT, he, 0, is6GhzAllowed(wpa_s))) {
 			return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 		} else {
 			return ndk::ScopedAStatus::ok();
@@ -1807,7 +1869,7 @@ ndk::ScopedAStatus P2pIface::addGroupInternal(
 	} else if (ssid->disabled == 2) {
 		if (wpas_p2p_group_add_persistent(
 			wpa_s, ssid, 0, 0, 0, 0, ht40, vht,
-			CHANWIDTH_USE_HT, he, 0, NULL, 0, 0)) {
+			CHANWIDTH_USE_HT, he, 0, NULL, 0, 0, is6GhzAllowed(wpa_s))) {
 			return createStatus(SupplicantStatusCode::FAILURE_NETWORK_UNKNOWN);
 		} else {
 			return ndk::ScopedAStatus::ok();
@@ -1852,7 +1914,7 @@ ndk::ScopedAStatus P2pIface::addGroupWithConfigInternal(
 
 		if (wpas_p2p_group_add(
 			wpa_s, persistent, freq, 0, ht40, vht,
-			CHANWIDTH_USE_HT, he, 0)) {
+			CHANWIDTH_USE_HT, he, 0, is6GhzAllowed(wpa_s))) {
 			return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 		}
 		return ndk::ScopedAStatus::ok();
@@ -2044,7 +2106,7 @@ ndk::ScopedAStatus P2pIface::findOnSocialChannelsInternal(uint32_t timeout_in_se
 	uint32_t search_delay = wpas_p2p_search_delay(wpa_s);
 	if (wpas_p2p_find(
 		wpa_s, timeout_in_sec, P2P_FIND_ONLY_SOCIAL, 0, nullptr,
-		nullptr, search_delay, 0, nullptr, 0)) {
+		nullptr, search_delay, 0, nullptr, 0, is6GhzAllowed(wpa_s))) {
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
 	return ndk::ScopedAStatus::ok();
@@ -2060,8 +2122,24 @@ ndk::ScopedAStatus P2pIface::findOnSpecificFrequencyInternal(
 	uint32_t search_delay = wpas_p2p_search_delay(wpa_s);
 	if (wpas_p2p_find(
 		wpa_s, timeout_in_sec, P2P_FIND_START_WITH_FULL, 0, nullptr,
-		nullptr, search_delay, 0, nullptr, freq)) {
+		nullptr, search_delay, 0, nullptr, freq, is6GhzAllowed(wpa_s))) {
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+	return ndk::ScopedAStatus::ok();
+}
+
+ndk::ScopedAStatus P2pIface::setVendorElementsInternal(
+	P2pFrameTypeMask frameTypeMask,
+	const std::vector<uint8_t>& vendorElemBytes)
+{
+	struct wpa_supplicant* wpa_s = retrieveIfacePtr();
+	for (int i = 0; i < NUM_VENDOR_ELEM_FRAMES; i++) {
+		uint32_t bit = convertWpaP2pFrameTypeToHalP2pFrameTypeBit(i);
+		if (0 == bit) continue;
+
+		if (static_cast<uint32_t>(frameTypeMask) & bit) {
+			updateP2pVendorElem(wpa_s, (enum wpa_vendor_elem_frame) i, vendorElemBytes);
+		}
 	}
 	return ndk::ScopedAStatus::ok();
 }

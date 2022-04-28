@@ -45,7 +45,8 @@ constexpr uint32_t kAllowedKeyMgmtMask =
 	 static_cast<uint32_t>(KeyMgmtMask::WAPI_PSK) |
 	 static_cast<uint32_t>(KeyMgmtMask::WAPI_CERT) |
 	 static_cast<uint32_t>(KeyMgmtMask::FILS_SHA256) |
-	 static_cast<uint32_t>(KeyMgmtMask::FILS_SHA384));
+	 static_cast<uint32_t>(KeyMgmtMask::FILS_SHA384) |
+	 static_cast<uint32_t>(KeyMgmtMask::DPP));
 constexpr uint32_t kAllowedProtoMask =
 	(static_cast<uint32_t>(ProtoMask::WPA) |
 	 static_cast<uint32_t>(ProtoMask::RSN) |
@@ -174,6 +175,13 @@ bool StaNetwork::isValid()
 	return validateAndCall(
 		this, SupplicantStatusCode::FAILURE_NETWORK_INVALID,
 		&StaNetwork::setBssidInternal, in_bssid);
+}
+
+::ndk::ScopedAStatus StaNetwork::setDppKeys(const DppConnectionKeys& in_keys)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_NETWORK_INVALID,
+		&StaNetwork::setDppKeysInternal, in_keys);
 }
 
 ::ndk::ScopedAStatus StaNetwork::setScanSsid(bool in_enable)
@@ -934,6 +942,39 @@ ndk::ScopedAStatus StaNetwork::setBssidInternal(
 		wpas_notify_network_bssid_set_changed(wpa_s, wpa_ssid);
 	}
 	return ndk::ScopedAStatus::ok();
+}
+
+ndk::ScopedAStatus StaNetwork::setDppKeysInternal(const DppConnectionKeys& keys)
+{
+#ifdef CONFIG_DPP
+	if (keys.connector.empty() || keys.cSign.empty() || keys.netAccessKey.empty()) {
+		return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
+	}
+
+	struct wpa_ssid *wpa_ssid = retrieveNetworkPtr();
+	std::string connector_str(keys.connector.begin(), keys.connector.end());
+
+	if (setStringFieldAndResetState(
+		connector_str.c_str(), &(wpa_ssid->dpp_connector), "dpp_connector")) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+
+	if (setByteArrayFieldAndResetState(
+		keys.cSign.data(), keys.cSign.size(), &(wpa_ssid->dpp_csign),
+		&(wpa_ssid->dpp_csign_len), "dpp csign")) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+
+	if (setByteArrayFieldAndResetState(
+		keys.netAccessKey.data(), keys.netAccessKey.size(), &(wpa_ssid->dpp_netaccesskey),
+		&(wpa_ssid->dpp_netaccesskey_len), "dpp netAccessKey")) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+
+	return ndk::ScopedAStatus::ok();
+#else
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+#endif
 }
 
 ndk::ScopedAStatus StaNetwork::setScanSsidInternal(bool enable)

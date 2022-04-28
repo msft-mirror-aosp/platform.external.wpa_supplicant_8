@@ -47,7 +47,7 @@ using android::base::RemoveFileIfExists;
 using android::base::StringPrintf;
 using android::base::WriteStringToFile;
 using aidl::android::hardware::wifi::hostapd::BandMask;
-using aidl::android::hardware::wifi::hostapd::Bandwidth;
+using aidl::android::hardware::wifi::hostapd::ChannelBandwidth;
 using aidl::android::hardware::wifi::hostapd::ChannelParams;
 using aidl::android::hardware::wifi::hostapd::EncryptionType;
 using aidl::android::hardware::wifi::hostapd::Generation;
@@ -321,6 +321,7 @@ std::string CreateHostapdConfig(
 	// Encryption config string
 	uint32_t band = 0;
 	band |= static_cast<uint32_t>(channelParams.bandMask);
+	bool is_2Ghz_band_only = band == static_cast<uint32_t>(band2Ghz);
 	bool is_6Ghz_band_only = band == static_cast<uint32_t>(band6Ghz);
 	bool is_60Ghz_band_only = band == static_cast<uint32_t>(band60Ghz);
 	std::string encryption_config_as_string;
@@ -458,7 +459,6 @@ std::string CreateHostapdConfig(
 	}
 
 	std::string hw_mode_as_string;
-	std::string ht_cap_vht_oper_chwidth_as_string;
 	std::string enable_edmg_as_string;
 	std::string edmg_channel_as_string;
 	bool is_60Ghz_used = false;
@@ -476,22 +476,12 @@ std::string CreateHostapdConfig(
 		if (((band & band5Ghz) != 0)
 		    || ((band & band6Ghz) != 0)) {
 			hw_mode_as_string = "hw_mode=any";
-			if (iface_params.hwModeParams.enable80211AC) {
-				ht_cap_vht_oper_chwidth_as_string =
-					"ht_capab=[HT40+]\n"
-					"vht_oper_chwidth=1";
-			}
 		} else {
 			hw_mode_as_string = "hw_mode=g";
 		}
 	} else if (((band & band5Ghz) != 0)
 		    || ((band & band6Ghz) != 0)) {
 			hw_mode_as_string = "hw_mode=a";
-		if (iface_params.hwModeParams.enable80211AC) {
-			ht_cap_vht_oper_chwidth_as_string =
-				"ht_capab=[HT40+]\n"
-				"vht_oper_chwidth=1";
-		}
 	} else {
 		wpa_printf(MSG_ERROR, "Invalid band");
 		return "";
@@ -502,7 +492,6 @@ std::string CreateHostapdConfig(
 	if (iface_params.hwModeParams.enable80211AX && !is_60Ghz_used) {
 		he_params_as_string = StringPrintf(
 			"ieee80211ax=1\n"
-			"he_oper_chwidth=1\n"
 			"he_su_beamformer=%d\n"
 			"he_su_beamformee=%d\n"
 			"he_mu_beamformer=%d\n"
@@ -515,6 +504,62 @@ std::string CreateHostapdConfig(
 		he_params_as_string = "ieee80211ax=0";
 	}
 #endif /* CONFIG_IEEE80211AX */
+
+	std::string ht_cap_vht_oper_he_oper_chwidth_as_string;
+	switch (iface_params.hwModeParams.maximumChannelBandwidth) {
+	case ChannelBandwidth::BANDWIDTH_20:
+		ht_cap_vht_oper_he_oper_chwidth_as_string = StringPrintf(
+#ifdef CONFIG_IEEE80211AX
+			"he_oper_chwidth=0\n"
+#endif
+			"vht_oper_chwidth=0");
+		break;
+	case ChannelBandwidth::BANDWIDTH_40:
+		ht_cap_vht_oper_he_oper_chwidth_as_string = StringPrintf(
+			"ht_capab=[HT40+]\n"
+#ifdef CONFIG_IEEE80211AX
+			"he_oper_chwidth=0\n"
+#endif
+			"vht_oper_chwidth=0");
+		break;
+	case ChannelBandwidth::BANDWIDTH_80:
+		ht_cap_vht_oper_he_oper_chwidth_as_string = StringPrintf(
+			"ht_capab=[HT40+]\n"
+#ifdef CONFIG_IEEE80211AX
+			"he_oper_chwidth=%d\n"
+#endif
+			"vht_oper_chwidth=%d",
+#ifdef CONFIG_IEEE80211AX
+			(iface_params.hwModeParams.enable80211AX && !is_60Ghz_used) ? 1 : 0,
+#endif
+			iface_params.hwModeParams.enable80211AC ? 1 : 0);
+		break;
+	case ChannelBandwidth::BANDWIDTH_160:
+		ht_cap_vht_oper_he_oper_chwidth_as_string = StringPrintf(
+			"ht_capab=[HT40+]\n"
+#ifdef CONFIG_IEEE80211AX
+			"he_oper_chwidth=%d\n"
+#endif
+			"vht_oper_chwidth=%d",
+#ifdef CONFIG_IEEE80211AX
+			(iface_params.hwModeParams.enable80211AX && !is_60Ghz_used) ? 2 : 0,
+#endif
+			iface_params.hwModeParams.enable80211AC ? 2 : 0);
+		break;
+	default:
+		if (!is_2Ghz_band_only && !is_60Ghz_used
+		    && iface_params.hwModeParams.enable80211AC) {
+			ht_cap_vht_oper_he_oper_chwidth_as_string =
+					"ht_capab=[HT40+]\n"
+					"vht_oper_chwidth=1\n";
+		}
+#ifdef CONFIG_IEEE80211AX
+		if (iface_params.hwModeParams.enable80211AX && !is_60Ghz_used) {
+			ht_cap_vht_oper_he_oper_chwidth_as_string += "he_oper_chwidth=1";
+		}
+#endif
+		break;
+	}
 
 #ifdef CONFIG_INTERWORKING
 	std::string access_network_params_as_string;
@@ -581,7 +626,7 @@ std::string CreateHostapdConfig(
 		iface_params.hwModeParams.enable80211N ? 1 : 0,
 		iface_params.hwModeParams.enable80211AC ? 1 : 0,
 		he_params_as_string.c_str(),
-		hw_mode_as_string.c_str(), ht_cap_vht_oper_chwidth_as_string.c_str(),
+		hw_mode_as_string.c_str(), ht_cap_vht_oper_he_oper_chwidth_as_string.c_str(),
 		nw_params.isHidden ? 1 : 0,
 #ifdef CONFIG_INTERWORKING
 		access_network_params_as_string.c_str(),
@@ -619,36 +664,36 @@ Generation getGeneration(hostapd_hw_modes *current_mode)
 	}
 }
 
-Bandwidth getBandwidth(struct hostapd_config *iconf)
+ChannelBandwidth getChannelBandwidth(struct hostapd_config *iconf)
 {
-	wpa_printf(MSG_DEBUG, "getBandwidth %d, isHT=%d, isHT40=%d",
+	wpa_printf(MSG_DEBUG, "getChannelBandwidth %d, isHT=%d, isHT40=%d",
 		   iconf->vht_oper_chwidth, iconf->ieee80211n,
 		   iconf->secondary_channel);
 	switch (iconf->vht_oper_chwidth) {
 	case CHANWIDTH_80MHZ:
-		return Bandwidth::BANDWIDTH_80;
+		return ChannelBandwidth::BANDWIDTH_80;
 	case CHANWIDTH_80P80MHZ:
-		return Bandwidth::BANDWIDTH_80P80;
+		return ChannelBandwidth::BANDWIDTH_80P80;
 		break;
 	case CHANWIDTH_160MHZ:
-		return Bandwidth::BANDWIDTH_160;
+		return ChannelBandwidth::BANDWIDTH_160;
 		break;
 	case CHANWIDTH_USE_HT:
 		if (iconf->ieee80211n) {
 			return iconf->secondary_channel != 0 ?
-				Bandwidth::BANDWIDTH_40 : Bandwidth::BANDWIDTH_20;
+				ChannelBandwidth::BANDWIDTH_40 : ChannelBandwidth::BANDWIDTH_20;
 		}
-		return Bandwidth::BANDWIDTH_20_NOHT;
+		return ChannelBandwidth::BANDWIDTH_20_NOHT;
 	case CHANWIDTH_2160MHZ:
-		return Bandwidth::BANDWIDTH_2160;
+		return ChannelBandwidth::BANDWIDTH_2160;
 	case CHANWIDTH_4320MHZ:
-		return Bandwidth::BANDWIDTH_4320;
+		return ChannelBandwidth::BANDWIDTH_4320;
 	case CHANWIDTH_6480MHZ:
-		return Bandwidth::BANDWIDTH_6480;
+		return ChannelBandwidth::BANDWIDTH_6480;
 	case CHANWIDTH_8640MHZ:
-		return Bandwidth::BANDWIDTH_8640;
+		return ChannelBandwidth::BANDWIDTH_8640;
 	default:
-		return Bandwidth::BANDWIDTH_INVALID;
+		return ChannelBandwidth::BANDWIDTH_INVALID;
 	}
 }
 
@@ -958,7 +1003,7 @@ std::vector<uint8_t>  generateRandomOweSsid()
 				iface_hapd->conf->bridge : iface_hapd->conf->iface,
 			info.apIfaceInstance = iface_hapd->conf->iface;
 			info.freqMhz = iface_hapd->iface->freq;
-			info.bandwidth = getBandwidth(iface_hapd->iconf);
+			info.channelBandwidth = getChannelBandwidth(iface_hapd->iconf);
 			info.generation = getGeneration(iface_hapd->iface->current_mode);
 			info.apIfaceInstanceMacAddress.assign(iface_hapd->own_addr,
 				iface_hapd->own_addr + ETH_ALEN);
