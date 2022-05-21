@@ -1891,6 +1891,15 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 		wpa_sm_set_param(wpa_s->wpa, WPA_PARAM_DENY_PTK0_REKEY, 0);
 	}
 
+#ifdef CONFIG_DRIVER_NL80211_BRCM
+	if ((wpa_s->key_mgmt & WPA_KEY_MGMT_CROSS_AKM_ROAM) &&
+	    IS_CROSS_AKM_ROAM_KEY_MGMT(ssid->key_mgmt)) {
+		wpa_s->key_mgmt = WPA_KEY_MGMT_SAE | WPA_KEY_MGMT_PSK;
+		wpa_dbg(wpa_s, MSG_INFO,
+			"WPA: Updating to KEY_MGMT SAE+PSK for seamless roaming");
+	}
+#endif /* CONFIG_DRIVER_NL80211_BRCM */
+
 	return 0;
 }
 
@@ -3904,7 +3913,12 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 #endif /* CONFIG_WEP */
 
 	if ((wpa_s->drv_flags & WPA_DRIVER_FLAGS_4WAY_HANDSHAKE_PSK) &&
-	    (params.key_mgmt_suite == WPA_KEY_MGMT_PSK ||
+	    (
+#ifdef CONFIG_DRIVER_NL80211_BRCM
+	     (params.key_mgmt_suite & WPA_KEY_MGMT_PSK) ||
+#else
+	     params.key_mgmt_suite == WPA_KEY_MGMT_PSK ||
+#endif /* CONFIG_DRIVER_NL80211_BRCM */
 	     params.key_mgmt_suite == WPA_KEY_MGMT_FT_PSK)) {
 		params.passphrase = ssid->passphrase;
 		if (ssid->psk_set)
@@ -3929,7 +3943,12 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		else
 			params.req_key_mgmt_offload = 1;
 
-		if ((params.key_mgmt_suite == WPA_KEY_MGMT_PSK ||
+		if ((
+#ifdef CONFIG_DRIVER_NL80211_BRCM
+		     (params.key_mgmt_suite & WPA_KEY_MGMT_PSK) ||
+#else
+		     params.key_mgmt_suite == WPA_KEY_MGMT_PSK ||
+#endif /* CONFIG_DRIVER_NL80211_BRCM */
 		     params.key_mgmt_suite == WPA_KEY_MGMT_PSK_SHA256 ||
 		     params.key_mgmt_suite == WPA_KEY_MGMT_FT_PSK) &&
 		    ssid->psk_set)
@@ -8145,6 +8164,17 @@ void wpas_auth_failed(struct wpa_supplicant *wpa_s, char *reason)
 		"id=%d ssid=\"%s\" auth_failures=%u duration=%d reason=%s",
 		ssid->id, wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
 		ssid->auth_failures, dur, reason);
+
+	char *format_str = "id=%d ssid=\"%s\" auth_failures=%u duration=%d reason=%s";
+	int msg_len = snprintf(NULL, 0, format_str,
+		ssid->id, wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
+		ssid->auth_failures, dur, reason) + 1;
+	char *msg = os_malloc(msg_len);
+	snprintf(msg, msg_len, format_str,
+		ssid->id, wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
+		ssid->auth_failures, dur, reason);
+	wpas_notify_ssid_temp_disabled(wpa_s, msg);
+	os_free(msg);
 }
 
 
