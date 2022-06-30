@@ -126,13 +126,22 @@ extern "C"
 	void wpas_aidl_notify_transition_disable(
 		struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid, u8 bitmap);
 	void wpas_aidl_notify_network_not_found(struct wpa_supplicant *wpa_s);
-	void wpas_aidl_notify_bss_freq_changed(struct wpa_supplicant *wpa_s);
+	void wpas_aidl_notify_frequency_changed(struct wpa_supplicant *wpa_s, int frequency);
 	void wpas_aidl_notify_ceritification(struct wpa_supplicant *wpa_s,
 		int depth, const char *subject,
 		const char *altsubject[],
 		int num_altsubject,
 		const char *cert_hash,
 		const struct wpabuf *cert);
+	void wpas_aidl_notify_eap_method_selected(struct wpa_supplicant *wpa_s,
+		const char *reason_string);
+	void wpas_aidl_notify_ssid_temp_disabled(struct wpa_supplicant *wpa_s,
+		const char *reason_string);
+	void wpas_aidl_notify_open_ssl_failure(struct wpa_supplicant *wpa_s,
+		const char *reason_string);
+	void wpas_aidl_notify_qos_policy_reset(struct wpa_supplicant *wpa_s);
+	void wpas_aidl_notify_qos_policy_request(struct wpa_supplicant *wpa_s,
+		struct dscp_policy_data *policies, int num_policies);
 #else   // CONFIG_CTRL_IFACE_AIDL
 static inline int wpas_aidl_register_interface(struct wpa_supplicant *wpa_s)
 {
@@ -284,7 +293,7 @@ static void wpas_aidl_notify_transition_disable(struct wpa_supplicant *wpa_s,
 {}
 static void wpas_aidl_notify_network_not_found(struct wpa_supplicant *wpa_s)
 {}
-void wpas_aidl_notify_bss_freq_changed(struct wpa_supplicant *wpa_s)
+void wpas_aidl_notify_frequency_changed(struct wpa_supplicant *wpa_s, int frequency)
 {}
 void wpas_aidl_notify_ceritification(struct wpa_supplicant *wpa_s,
 	int depth, const char *subject,
@@ -292,6 +301,20 @@ void wpas_aidl_notify_ceritification(struct wpa_supplicant *wpa_s,
 	int num_altsubject,
 	const char *cert_hash,
 	const struct wpabuf *cert)
+{}
+void wpas_aidl_notify_eap_method_selected(struct wpa_supplicant *wpa_s,
+	const char *reason_string)
+{}
+void wpas_aidl_notify_ssid_temp_disabled(struct wpa_supplicant *wpa_s,
+	const char *reason_string)
+{}
+void wpas_aidl_notify_open_ssl_failure(struct wpa_supplicant *wpa_s,
+	const char *reason_string)
+{}
+static void wpas_aidl_notify_qos_policy_reset(struct wpa_supplicant *wpa_s) {}
+static void wpas_aidl_notify_qos_policy_request(struct wpa_supplicant *wpa_s,
+						struct dscp_policy_data *policies,
+						int num_policies)
 {}
 #endif  // CONFIG_CTRL_IFACE_AIDL
 

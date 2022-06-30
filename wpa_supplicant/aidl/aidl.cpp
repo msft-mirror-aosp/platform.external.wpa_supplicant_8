@@ -22,6 +22,7 @@ extern "C"
 }
 
 using aidl::android::hardware::wifi::supplicant::AidlManager;
+using aidl::android::hardware::wifi::supplicant::AuxiliarySupplicantEventCode;
 using aidl::android::hardware::wifi::supplicant::DppEventType;
 using aidl::android::hardware::wifi::supplicant::DppFailureCode;
 using aidl::android::hardware::wifi::supplicant::DppProgressCode;
@@ -922,7 +923,7 @@ void wpas_aidl_notify_network_not_found(struct wpa_supplicant *wpa_s)
 	aidl_manager->notifyNetworkNotFound(wpa_s);
 }
 
-void wpas_aidl_notify_bss_freq_changed(struct wpa_supplicant *wpa_s)
+void wpas_aidl_notify_frequency_changed(struct wpa_supplicant *wpa_s, int frequency)
 {
 	if (!wpa_s)
 		return;
@@ -931,10 +932,10 @@ void wpas_aidl_notify_bss_freq_changed(struct wpa_supplicant *wpa_s)
 	if (!aidl_manager)
 		return;
 
-	wpa_printf(MSG_DEBUG, "Notify %s frequency changed to %d",
-	    wpa_s->ifname, wpa_s->assoc_freq);
+	wpa_printf(MSG_INFO, "Notify %s frequency changed to %d",
+	    wpa_s->ifname, frequency);
 
-	aidl_manager->notifyBssFreqChanged(wpa_s);
+	aidl_manager->notifyFrequencyChanged(wpa_s, frequency);
 }
 
 void wpas_aidl_notify_ceritification(struct wpa_supplicant *wpa_s,
@@ -961,3 +962,74 @@ void wpas_aidl_notify_ceritification(struct wpa_supplicant *wpa_s,
 			cert_hash,
 			cert);
 }
+
+void wpas_aidl_notify_auxiliary_event(struct wpa_supplicant *wpa_s,
+	AuxiliarySupplicantEventCode event_code, const char *reason_string)
+{
+	if (!wpa_s)
+		return;
+
+	AidlManager *aidl_manager = AidlManager::getInstance();
+	if (!aidl_manager)
+		return;
+
+	wpa_printf(MSG_DEBUG, "Notify auxiliary event, code=%d",
+		static_cast<int>(event_code));
+	aidl_manager->notifyAuxiliaryEvent(wpa_s, event_code, reason_string);
+}
+
+void wpas_aidl_notify_eap_method_selected(struct wpa_supplicant *wpa_s,
+	const char *reason_string)
+{
+	wpas_aidl_notify_auxiliary_event(wpa_s,
+		AuxiliarySupplicantEventCode::EAP_METHOD_SELECTED,
+		reason_string);
+}
+
+void wpas_aidl_notify_ssid_temp_disabled(struct wpa_supplicant *wpa_s,
+	const char *reason_string)
+{
+	wpas_aidl_notify_auxiliary_event(wpa_s,
+		AuxiliarySupplicantEventCode::SSID_TEMP_DISABLED,
+		reason_string);
+}
+
+void wpas_aidl_notify_open_ssl_failure(struct wpa_supplicant *wpa_s,
+	const char *reason_string)
+{
+	wpas_aidl_notify_auxiliary_event(wpa_s,
+		AuxiliarySupplicantEventCode::OPEN_SSL_FAILURE,
+		reason_string);
+}
+
+void wpas_aidl_notify_qos_policy_reset(
+	struct wpa_supplicant *wpa_s)
+{
+	if (!wpa_s)
+		return;
+	wpa_printf(
+		MSG_DEBUG, "Notifying Qos Policy Reset");
+
+	AidlManager *aidl_manager = AidlManager::getInstance();
+	if (!aidl_manager)
+		return;
+
+	aidl_manager->notifyQosPolicyReset(wpa_s);
+}
+
+void wpas_aidl_notify_qos_policy_request(struct wpa_supplicant *wpa_s,
+	struct dscp_policy_data *policies, int num_policies)
+{
+	if (!wpa_s || !policies)
+		return;
+
+	wpa_printf(
+		MSG_DEBUG, "Notifying Qos Policy Request");
+
+	AidlManager *aidl_manager = AidlManager::getInstance();
+	if (!aidl_manager)
+		return;
+
+	aidl_manager->notifyQosPolicyRequest(wpa_s, policies, num_policies);
+}
+

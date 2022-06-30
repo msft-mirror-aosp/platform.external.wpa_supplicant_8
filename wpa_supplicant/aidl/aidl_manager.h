@@ -143,13 +143,20 @@ public:
 			struct wpa_ssid *ssid,
 			u8 bitmap);
 	void notifyNetworkNotFound(struct wpa_supplicant *wpa_s);
-	void notifyBssFreqChanged(struct wpa_supplicant *wpa_s);
+	void notifyFrequencyChanged(struct wpa_supplicant *wpa_s, int frequency);
 	void notifyCertification(struct wpa_supplicant *wpa_s,
 			int depth, const char *subject,
 			const char *altsubject[],
 			int num_altsubject,
 			const char *cert_hash,
 			const struct wpabuf *cert);
+	void notifyAuxiliaryEvent(struct wpa_supplicant *wpa_s,
+			AuxiliarySupplicantEventCode event_code,
+			const char *reason_string);
+	void notifyQosPolicyReset(struct wpa_supplicant *wpa_s);
+	void notifyQosPolicyRequest(struct wpa_supplicant *wpa_s,
+			struct dscp_policy_data *policies,
+			int num_policies);
 
 	// Methods called from aidl objects.
 	void notifyExtRadioWorkStart(struct wpa_supplicant *wpa_s, uint32_t id);
