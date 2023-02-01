@@ -1,6 +1,6 @@
 /*
  * hostapd - IEEE 802.11i-2004 / WPA Authenticator
- * Copyright (c) 2004-2017, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2022, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -275,6 +275,8 @@ struct wpa_auth_config {
 	 * PTK derivation regardless of advertised capabilities.
 	 */
 	bool force_kdk_derivation;
+
+	bool radius_psk;
 };
 
 typedef enum {
@@ -322,6 +324,9 @@ struct wpa_auth_callbacks {
 	void (*store_ptksa)(void *ctx, const u8 *addr, int cipher,
 			    u32 life_time, const struct wpa_ptk *ptk);
 	void (*clear_ptksa)(void *ctx, const u8 *addr, int cipher);
+	void (*request_radius_psk)(void *ctx, const u8 *addr, int key_mgmt,
+				   const u8 *anonce,
+				   const u8 *eapol, size_t eapol_len);
 #ifdef CONFIG_IEEE80211R_AP
 	struct wpa_state_machine * (*add_sta)(void *ctx, const u8 *sta_addr);
 	int (*add_sta_ft)(void *ctx, const u8 *sta_addr);
@@ -347,6 +352,10 @@ struct wpa_auth_callbacks {
 #ifdef CONFIG_MESH
 	int (*start_ampe)(void *ctx, const u8 *sta_addr);
 #endif /* CONFIG_MESH */
+#ifdef CONFIG_PASN
+	int (*set_ltf_keyseed)(void *ctx, const u8 *addr, const u8 *ltf_keyseed,
+			       size_t ltf_keyseed_len);
+#endif /* CONFIG_PASN */
 };
 
 struct wpa_authenticator * wpa_init(const u8 *addr,
@@ -422,7 +431,8 @@ int wpa_auth_pmksa_add_preauth(struct wpa_authenticator *wpa_auth,
 			       int session_timeout,
 			       struct eapol_state_machine *eapol);
 int wpa_auth_pmksa_add_sae(struct wpa_authenticator *wpa_auth, const u8 *addr,
-			   const u8 *pmk, const u8 *pmkid);
+			   const u8 *pmk, size_t pmk_len, const u8 *pmkid,
+			   int akmp);
 void wpa_auth_add_sae_pmkid(struct wpa_state_machine *sm, const u8 *pmkid);
 int wpa_auth_pmksa_add2(struct wpa_authenticator *wpa_auth, const u8 *addr,
 			const u8 *pmk, size_t pmk_len, const u8 *pmkid,
@@ -436,6 +446,7 @@ int wpa_auth_pmksa_list_mesh(struct wpa_authenticator *wpa_auth, const u8 *addr,
 			     char *buf, size_t len);
 struct rsn_pmksa_cache_entry *
 wpa_auth_pmksa_create_entry(const u8 *aa, const u8 *spa, const u8 *pmk,
+			    size_t pmk_len, int akmp,
 			    const u8 *pmkid, int expiration);
 int wpa_auth_pmksa_add_entry(struct wpa_authenticator *wpa_auth,
 			     struct rsn_pmksa_cache_entry *entry);
@@ -577,5 +588,7 @@ void wpa_auth_set_skip_send_eapol(struct wpa_authenticator *wpa_auth,
 				     u8 val);
 void wpa_auth_set_enable_eapol_large_timeout(struct wpa_authenticator *wpa_auth,
 				     u8 val);
+
+void wpa_auth_sta_radius_psk_resp(struct wpa_state_machine *sm, bool success);
 
 #endif /* WPA_AUTH_H */

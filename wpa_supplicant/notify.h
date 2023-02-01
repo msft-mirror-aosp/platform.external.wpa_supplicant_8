@@ -48,6 +48,7 @@ void wpas_notify_network_request(struct wpa_supplicant *wpa_s,
 				 struct wpa_ssid *ssid,
 				 enum wpa_ctrl_req_type rtype,
 				 const char *default_txt);
+void wpas_notify_permanent_id_req_denied(struct wpa_supplicant *wpa_s);
 void wpas_notify_scanning(struct wpa_supplicant *wpa_s);
 void wpas_notify_scan_done(struct wpa_supplicant *wpa_s, int success);
 void wpas_notify_scan_results(struct wpa_supplicant *wpa_s);
@@ -180,8 +181,10 @@ void wpas_notify_hs20_rx_deauth_imminent_notice(struct wpa_supplicant *wpa_s,
 void wpas_notify_hs20_rx_terms_and_conditions_acceptance(
 		struct wpa_supplicant *wpa_s, const char *url);
 void wpas_notify_dpp_config_received(struct wpa_supplicant *wpa_s,
-	    struct wpa_ssid *ssid);
+		struct wpa_ssid *ssid, bool conn_status_requested);
 void wpas_notify_dpp_config_sent(struct wpa_supplicant *wpa_s);
+void wpas_notify_dpp_connection_status_sent(struct wpa_supplicant *wpa_s,
+		enum dpp_status_error result);
 void wpas_notify_dpp_auth_success(struct wpa_supplicant *wpa_s);
 void wpas_notify_dpp_resp_pending(struct wpa_supplicant *wpa_s);
 void wpas_notify_dpp_not_compatible(struct wpa_supplicant *wpa_s);
@@ -218,5 +221,6 @@ void wpas_notify_qos_policy_reset(struct wpa_supplicant *wpa_s);
 void wpas_notify_qos_policy_request(struct wpa_supplicant *wpa_s,
 		struct dscp_policy_data *policies, int num_policies);
 void wpas_notify_frequency_changed(struct wpa_supplicant *wpa_s, int frequency);
+ssize_t wpas_get_certificate(const char *alias, uint8_t** value);
 
 #endif /* NOTIFY_H */

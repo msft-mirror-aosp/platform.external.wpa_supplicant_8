@@ -41,6 +41,7 @@ int wpa_derive_ptk_ft(struct wpa_sm *sm, const unsigned char *src_addr,
 	int use_sha384 = wpa_key_mgmt_sha384(sm->key_mgmt);
 	const u8 *mpmk;
 	size_t mpmk_len, kdk_len;
+	int ret = 0;
 
 	if (sm->xxkey_len > 0) {
 		mpmk = sm->xxkey;
@@ -75,10 +76,22 @@ int wpa_derive_ptk_ft(struct wpa_sm *sm, const unsigned char *src_addr,
 	else
 		kdk_len = 0;
 
-	return wpa_pmk_r1_to_ptk(sm->pmk_r1, sm->pmk_r1_len, sm->snonce, anonce,
-				 sm->own_addr, sm->bssid, sm->pmk_r1_name, ptk,
-				 ptk_name, sm->key_mgmt, sm->pairwise_cipher,
-				 kdk_len);
+	ret = wpa_pmk_r1_to_ptk(sm->pmk_r1, sm->pmk_r1_len, sm->snonce,
+				anonce, sm->own_addr, sm->bssid,
+				sm->pmk_r1_name, ptk, ptk_name, sm->key_mgmt,
+				sm->pairwise_cipher, kdk_len);
+	if (ret) {
+		wpa_printf(MSG_ERROR, "FT: PTK derivation failed");
+		return ret;
+	}
+
+#ifdef CONFIG_PASN
+	if (sm->secure_ltf &&
+	    ieee802_11_rsnx_capab(sm->ap_rsnxe, WLAN_RSNX_CAPAB_SECURE_LTF))
+		ret = wpa_ltf_keyseed(ptk, sm->key_mgmt, sm->pairwise_cipher);
+#endif /* CONFIG_PASN */
+
+	return ret;
 }
 
 
@@ -257,6 +270,8 @@ static u8 * wpa_ft_gen_req_ies(struct wpa_sm *sm, size_t *len,
 		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_FT_PSK);
 	else if (sm->key_mgmt == WPA_KEY_MGMT_FT_SAE)
 		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_FT_SAE);
+	else if (sm->key_mgmt == WPA_KEY_MGMT_FT_SAE_EXT_KEY)
+		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_FT_SAE_EXT_KEY);
 #ifdef CONFIG_FILS
 	else if (sm->key_mgmt == WPA_KEY_MGMT_FT_FILS_SHA256)
 		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_FT_FILS_SHA256);
@@ -467,6 +482,7 @@ static int wpa_ft_install_ptk(struct wpa_sm *sm, const u8 *bssid)
 		wpa_printf(MSG_WARNING, "FT: Failed to set PTK to the driver");
 		return -1;
 	}
+	sm->tk_set = true;
 
 	wpa_sm_store_ptk(sm, sm->bssid, sm->pairwise_cipher,
 			 sm->dot11RSNAConfigPMKLifetime, &sm->ptk);
@@ -685,6 +701,15 @@ int wpa_ft_process_response(struct wpa_sm *sm, const u8 *ies, size_t ies_len,
 			      kdk_len) < 0)
 		return -1;
 
+#ifdef CONFIG_PASN
+	if (sm->secure_ltf &&
+	    ieee802_11_rsnx_capab(sm->ap_rsnxe, WLAN_RSNX_CAPAB_SECURE_LTF) &&
+	    wpa_ltf_keyseed(&sm->ptk, sm->key_mgmt, sm->pairwise_cipher)) {
+		wpa_printf(MSG_DEBUG, "FT: Failed to derive LTF keyseed");
+		return -1;
+	}
+#endif /* CONFIG_PASN */
+
 	if (wpa_key_mgmt_fils(sm->key_mgmt)) {
 		kck = sm->ptk.kck2;
 		kck_len = sm->ptk.kck2_len;
@@ -743,7 +768,7 @@ int wpa_ft_is_completed(struct wpa_sm *sm)
 	return sm->ft_completed;
 }
 
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 int wpa_ft_is_ft_protocol(struct wpa_sm *sm)
 {
 	if (sm == NULL)
@@ -754,7 +779,7 @@ int wpa_ft_is_ft_protocol(struct wpa_sm *sm)
 
 	return sm->ft_protocol;
 }
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
 
 void wpa_reset_ft_completed(struct wpa_sm *sm)
 {

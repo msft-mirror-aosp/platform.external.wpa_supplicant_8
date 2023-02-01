@@ -19,6 +19,7 @@ struct eapol_sm;
 struct wpa_config_blob;
 struct hostapd_freq_params;
 struct wpa_channel_info;
+enum frame_encryption;
 
 struct wpa_sm_ctx {
 	void *ctx; /* pointer to arbitrary upper level context */
@@ -92,6 +93,11 @@ struct wpa_sm_ctx {
 	void (*transition_disable)(void *ctx, u8 bitmap);
 	void (*store_ptk)(void *ctx, u8 *addr, int cipher,
 			  u32 life_time, const struct wpa_ptk *ptk);
+#ifdef CONFIG_PASN
+	int (*set_ltf_keyseed)(void *ctx, const u8 *own_addr,
+			       const u8 *peer_addr, size_t ltf_keyseed_len,
+			       const u8 *ltf_keyseed);
+#endif /* CONFIG_PASN */
 };
 
 
@@ -118,6 +124,7 @@ enum wpa_sm_conf_params {
 	WPA_PARAM_OCI_FREQ_EAPOL_G2,
 	WPA_PARAM_OCI_FREQ_FT_ASSOC,
 	WPA_PARAM_OCI_FREQ_FILS_ASSOC,
+	WPA_PARAM_DISABLE_EAPOL_G2_TX,
 };
 
 struct rsn_supp_config {
@@ -183,7 +190,7 @@ int wpa_parse_wpa_ie(const u8 *wpa_ie, size_t wpa_ie_len,
 void wpa_sm_aborted_cached(struct wpa_sm *sm);
 void wpa_sm_aborted_external_cached(struct wpa_sm *sm);
 int wpa_sm_rx_eapol(struct wpa_sm *sm, const u8 *src_addr,
-		    const u8 *buf, size_t len);
+		    const u8 *buf, size_t len, enum frame_encryption encrypted);
 int wpa_sm_parse_own_wpa_ie(struct wpa_sm *sm, struct wpa_ie_data *data);
 int wpa_sm_pmksa_cache_list(struct wpa_sm *sm, char *buf, size_t len);
 struct rsn_pmksa_cache_entry * wpa_sm_pmksa_cache_head(struct wpa_sm *sm);
@@ -211,10 +218,10 @@ void wpa_sm_external_pmksa_cache_flush(struct wpa_sm *sm, void *network_ctx);
 
 int wpa_sm_get_p2p_ip_addr(struct wpa_sm *sm, u8 *buf);
 
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 void wpa_sm_install_pmk(struct wpa_sm *sm);
 void wpa_sm_notify_brcm_ft_reassoc(struct wpa_sm *sm, const u8 *bssid);
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
 
 void wpa_sm_set_rx_replay_ctr(struct wpa_sm *sm, const u8 *rx_replay_counter);
 void wpa_sm_set_ptk_kck_kek(struct wpa_sm *sm,
@@ -367,7 +374,8 @@ static inline void wpa_sm_aborted_external_cached(struct wpa_sm *sm)
 }
 
 static inline int wpa_sm_rx_eapol(struct wpa_sm *sm, const u8 *src_addr,
-				  const u8 *buf, size_t len)
+				  const u8 *buf, size_t len,
+				  enum frame_encryption encrypted)
 {
 	return -1;
 }
@@ -454,9 +462,10 @@ int wpa_ft_validate_reassoc_resp(struct wpa_sm *sm, const u8 *ies,
 				 size_t ies_len, const u8 *src_addr);
 int wpa_ft_start_over_ds(struct wpa_sm *sm, const u8 *target_ap,
 			 const u8 *mdie);
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 int wpa_ft_is_ft_protocol(struct wpa_sm *sm);
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
+
 #ifdef CONFIG_PASN
 
 int wpa_pasn_ft_derive_pmk_r1(struct wpa_sm *sm, int akmp, const u8 *r1kh_id,
@@ -496,12 +505,12 @@ static inline int wpa_ft_is_completed(struct wpa_sm *sm)
 	return 0;
 }
 
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 static inline int wpa_ft_is_ft_protocol(struct wpa_sm *sm)
 {
 	return 0;
 }
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
 
 static inline void wpa_reset_ft_completed(struct wpa_sm *sm)
 {
@@ -578,5 +587,6 @@ void wpa_sm_set_fils_cache_id(struct wpa_sm *sm, const u8 *fils_cache_id);
 void wpa_sm_set_dpp_z(struct wpa_sm *sm, const struct wpabuf *z);
 void wpa_pasn_pmksa_cache_add(struct wpa_sm *sm, const u8 *pmk, size_t pmk_len,
 			      const u8 *pmkid, const u8 *bssid, int key_mgmt);
+void wpa_pasn_sm_set_caps(struct wpa_sm *sm, unsigned int flags2);
 
 #endif /* WPA_H */

@@ -119,7 +119,6 @@ endif
 
 ifdef CONFIG_FIPS
 CONFIG_NO_RANDOM_POOL=
-CONFIG_OPENSSL_CMAC=y
 endif
 
 OBJS = config.c
@@ -277,6 +276,7 @@ L_CFLAGS += -DCONFIG_SAE
 OBJS += src/common/sae.c
 ifdef CONFIG_SAE_PK
 L_CFLAGS += -DCONFIG_SAE_PK
+NEED_AES_SIV=y
 OBJS += src/common/sae_pk.c
 endif
 NEED_ECC=y
@@ -515,6 +515,9 @@ OBJS += src/eap_peer/eap_tls.c
 endif
 TLS_FUNCS=y
 CONFIG_IEEE8021X_EAPOL=y
+ifdef CONFIG_EAP_TLSV1_3
+L_CFLAGS += -DEAP_TLSV1_3
+endif
 endif
 
 ifdef CONFIG_EAP_UNAUTH_TLS
@@ -775,6 +778,7 @@ OBJS += src/eap_peer/eap_pwd.c src/eap_common/eap_pwd_common.c
 CONFIG_IEEE8021X_EAPOL=y
 NEED_ECC=y
 NEED_DRAGONFLY=y
+MS_FUNCS=y
 endif
 
 ifdef CONFIG_EAP_EKE
@@ -945,6 +949,9 @@ endif
 ifdef CONFIG_IEEE80211AX
 OBJS += src/ap/ieee802_11_he.c
 endif
+ifdef CONFIG_IEEE80211BE
+OBJS += src/ap/ieee802_11_eht.c
+endif
 ifdef CONFIG_WNM_AP
 L_CFLAGS += -DCONFIG_WNM_AP
 OBJS += src/ap/wnm_ap.c
@@ -966,6 +973,10 @@ OBJS += src/eap_server/eap_server_methods.c
 
 ifdef CONFIG_IEEE80211AC
 L_CFLAGS += -DCONFIG_IEEE80211AC
+endif
+ifdef CONFIG_IEEE80211BE
+CONFIG_IEEE80211AX=y
+L_CFLAGS += -DCONFIG_IEEE80211BE
 endif
 ifdef CONFIG_IEEE80211AX
 L_CFLAGS += -DCONFIG_IEEE80211AX
@@ -1099,6 +1110,7 @@ L_CFLAGS += -DCONFIG_TLSV12
 endif
 
 ifeq ($(CONFIG_TLS), openssl)
+L_CFLAGS += -DCRYPTO_RSA_OAEP_SHA256
 ifdef TLS_FUNCS
 L_CFLAGS += -DEAP_TLS_OPENSSL
 OBJS += src/crypto/tls_openssl.c
@@ -1303,9 +1315,7 @@ ifdef NEED_AES_ENCBLOCK
 AESOBJS += src/crypto/aes-encblock.c
 endif
 NEED_AES_ENC=y
-ifdef CONFIG_OPENSSL_CMAC
-L_CFLAGS += -DCONFIG_OPENSSL_CMAC
-else
+ifneq ($(CONFIG_TLS), openssl)
 AESOBJS += src/crypto/aes-omac1.c
 endif
 ifdef NEED_AES_WRAP
@@ -1396,6 +1406,17 @@ ifdef CONFIG_INTERNAL_RC4
 ifndef CONFIG_NO_RC4
 OBJS += src/crypto/rc4.c
 endif
+endif
+endif
+
+ifdef CONFIG_SAE
+ifdef NEED_SHA384
+# Need to add HMAC-SHA384 KDF as well, if SHA384 was enabled.
+NEED_HMAC_SHA384_KDF=y
+endif
+ifdef NEED_SHA512
+# Need to add HMAC-SHA512 KDF as well, if SHA512 was enabled.
+NEED_HMAC_SHA512_KDF=y
 endif
 endif
 
@@ -1770,7 +1791,7 @@ LOCAL_STATIC_LIBRARIES += $(LIB_STATIC_EAP_PROXY)
 LOCAL_SHARED_LIBRARIES += $(LIB_SHARED_EAP_PROXY)
 endif
 ifeq ($(CONFIG_TLS), openssl)
-LOCAL_SHARED_LIBRARIES += libcrypto libssl libkeystore-wifi-hidl
+LOCAL_SHARED_LIBRARIES += libcrypto libssl
 endif
 
 # With BoringSSL we need libkeystore-engine in order to provide access to
@@ -1791,7 +1812,8 @@ ifeq ($(DBUS), y)
 LOCAL_SHARED_LIBRARIES += libdbus
 endif
 ifeq ($(WPA_SUPPLICANT_USE_AIDL), y)
-LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant-V1-ndk
+LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant-V2-ndk
+LOCAL_SHARED_LIBRARIES += android.system.keystore2-V1-ndk
 LOCAL_SHARED_LIBRARIES += libutils libbase
 LOCAL_SHARED_LIBRARIES += libbinder_ndk
 LOCAL_STATIC_LIBRARIES += libwpa_aidl
@@ -1856,6 +1878,7 @@ LOCAL_C_INCLUDES := $(INCLUDES)
 LOCAL_SRC_FILES := \
     aidl/aidl.cpp \
     aidl/aidl_manager.cpp \
+    aidl/certificate_utils.cpp \
     aidl/iface_config_utils.cpp \
     aidl/p2p_iface.cpp \
     aidl/p2p_network.cpp \
@@ -1863,7 +1886,8 @@ LOCAL_SRC_FILES := \
     aidl/sta_network.cpp \
     aidl/supplicant.cpp
 LOCAL_SHARED_LIBRARIES := \
-    android.hardware.wifi.supplicant-V1-ndk \
+    android.hardware.wifi.supplicant-V2-ndk \
+    android.system.keystore2-V1-ndk \
     libbinder_ndk \
     libbase \
     libutils \

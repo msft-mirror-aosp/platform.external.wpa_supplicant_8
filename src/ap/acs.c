@@ -420,19 +420,24 @@ static int acs_usable_bw160_chan(const struct hostapd_channel_data *chan)
 static int acs_survey_is_sufficient(struct freq_survey *survey)
 {
 	if (!(survey->filled & SURVEY_HAS_NF)) {
-		wpa_printf(MSG_INFO, "ACS: Survey is missing noise floor");
+		wpa_printf(MSG_INFO,
+			   "ACS: Survey for freq %d is missing noise floor",
+			   survey->freq);
 		return 0;
 	}
 
 	if (!(survey->filled & SURVEY_HAS_CHAN_TIME)) {
-		wpa_printf(MSG_INFO, "ACS: Survey is missing channel time");
+		wpa_printf(MSG_INFO,
+			   "ACS: Survey for freq %d is missing channel time",
+			   survey->freq);
 		return 0;
 	}
 
 	if (!(survey->filled & SURVEY_HAS_CHAN_TIME_BUSY) &&
 	    !(survey->filled & SURVEY_HAS_CHAN_TIME_RX)) {
 		wpa_printf(MSG_INFO,
-			   "ACS: Survey is missing RX and busy time (at least one is required)");
+			   "ACS: Survey for freq %d is missing RX and busy time (at least one is required)",
+			   survey->freq);
 		return 0;
 	}
 
@@ -540,6 +545,10 @@ static void acs_survey_mode_interference_factor(
 		if (!acs_usable_chan(chan))
 			continue;
 
+		if ((chan->flag & HOSTAPD_CHAN_RADAR) &&
+		    iface->conf->acs_exclude_dfs)
+			continue;
+
 		if (!is_in_chanlist(iface, chan))
 			continue;
 
@@ -547,6 +556,10 @@ static void acs_survey_mode_interference_factor(
 			continue;
 
 		if (chan->max_tx_power < iface->conf->min_tx_power)
+			continue;
+
+		if ((chan->flag & HOSTAPD_CHAN_INDOOR_ONLY) &&
+		    iface->conf->country[2] == 0x4f)
 			continue;
 
 		wpa_printf(MSG_DEBUG, "ACS: Survey analysis for channel %d (%d MHz)",
@@ -670,6 +683,10 @@ acs_find_ideal_chan_mode(struct hostapd_iface *iface,
 		if (!chan_pri_allowed(chan))
 			continue;
 
+		if ((chan->flag & HOSTAPD_CHAN_RADAR) &&
+		    iface->conf->acs_exclude_dfs)
+			continue;
+
 		if (!is_in_chanlist(iface, chan))
 			continue;
 
@@ -677,6 +694,10 @@ acs_find_ideal_chan_mode(struct hostapd_iface *iface,
 			continue;
 
 		if (chan->max_tx_power < iface->conf->min_tx_power)
+			continue;
+
+		if ((chan->flag & HOSTAPD_CHAN_INDOOR_ONLY) &&
+		    iface->conf->country[2] == 0x4f)
 			continue;
 
 		if (!chan_bw_allowed(chan, bw, 1, 1)) {
@@ -702,7 +723,7 @@ acs_find_ideal_chan_mode(struct hostapd_iface *iface,
 		if (mode->mode == HOSTAPD_MODE_IEEE80211A &&
 		    (iface->conf->ieee80211ac || iface->conf->ieee80211ax)) {
 			if (hostapd_get_oper_chwidth(iface->conf) ==
-			    CHANWIDTH_80MHZ &&
+			    CONF_OPER_CHWIDTH_80MHZ &&
 			    !acs_usable_bw80_chan(chan)) {
 				wpa_printf(MSG_DEBUG,
 					   "ACS: Channel %d: not allowed as primary channel for 80 MHz bandwidth",
@@ -711,7 +732,7 @@ acs_find_ideal_chan_mode(struct hostapd_iface *iface,
 			}
 
 			if (hostapd_get_oper_chwidth(iface->conf) ==
-			    CHANWIDTH_160MHZ &&
+			    CONF_OPER_CHWIDTH_160MHZ &&
 			    !acs_usable_bw160_chan(chan)) {
 				wpa_printf(MSG_DEBUG,
 					   "ACS: Channel %d: not allowed as primary channel for 160 MHz bandwidth",
@@ -865,11 +886,13 @@ acs_find_ideal_chan(struct hostapd_iface *iface)
 
 	if (iface->conf->ieee80211ac || iface->conf->ieee80211ax) {
 		switch (hostapd_get_oper_chwidth(iface->conf)) {
-		case CHANWIDTH_80MHZ:
+		case CONF_OPER_CHWIDTH_80MHZ:
 			n_chans = 4;
 			break;
-		case CHANWIDTH_160MHZ:
+		case CONF_OPER_CHWIDTH_160MHZ:
 			n_chans = 8;
+			break;
+		default:
 			break;
 		}
 	}
@@ -907,13 +930,13 @@ static void acs_adjust_center_freq(struct hostapd_iface *iface)
 	wpa_printf(MSG_DEBUG, "ACS: Adjusting VHT center frequency");
 
 	switch (hostapd_get_oper_chwidth(iface->conf)) {
-	case CHANWIDTH_USE_HT:
+	case CONF_OPER_CHWIDTH_USE_HT:
 		offset = 2 * iface->conf->secondary_channel;
 		break;
-	case CHANWIDTH_80MHZ:
+	case CONF_OPER_CHWIDTH_80MHZ:
 		offset = 6;
 		break;
-	case CHANWIDTH_160MHZ:
+	case CONF_OPER_CHWIDTH_160MHZ:
 		offset = 14;
 		break;
 	default:
@@ -984,6 +1007,15 @@ static void acs_study(struct hostapd_iface *iface)
 	if (iface->conf->ieee80211ac || iface->conf->ieee80211ax)
 		acs_adjust_center_freq(iface);
 
+	err = hostapd_select_hw_mode(iface);
+	if (err) {
+		wpa_printf(MSG_ERROR,
+			   "ACS: Could not (err: %d) select hw_mode for freq=%d channel=%d",
+			err, iface->freq, iface->conf->channel);
+		err = -1;
+		goto fail;
+	}
+
 	err = 0;
 fail:
 	/*
@@ -1044,7 +1076,9 @@ static int * acs_request_scan_add_freqs(struct hostapd_iface *iface,
 
 	for (i = 0; i < mode->num_channels; i++) {
 		chan = &mode->channels[i];
-		if (chan->flag & HOSTAPD_CHAN_DISABLED)
+		if ((chan->flag & HOSTAPD_CHAN_DISABLED) ||
+		    ((chan->flag & HOSTAPD_CHAN_RADAR) &&
+		     iface->conf->acs_exclude_dfs))
 			continue;
 
 		if (!is_in_chanlist(iface, chan))
@@ -1054,6 +1088,10 @@ static int * acs_request_scan_add_freqs(struct hostapd_iface *iface,
 			continue;
 
 		if (chan->max_tx_power < iface->conf->min_tx_power)
+			continue;
+
+		if ((chan->flag & HOSTAPD_CHAN_INDOOR_ONLY) &&
+		    iface->conf->country[2] == 0x4f)
 			continue;
 
 		*freq++ = chan->freq;

@@ -24,7 +24,7 @@
 #include "p2p_supplicant.h"
 #include "sme.h"
 #include "notify.h"
-#include "aidl.h"
+#include "aidl/aidl.h"
 
 int wpas_notify_supplicant_initialized(struct wpa_global *global)
 {
@@ -280,6 +280,12 @@ void wpas_notify_network_request(struct wpa_supplicant *wpa_s,
 }
 
 
+void wpas_notify_permanent_id_req_denied(struct wpa_supplicant *wpa_s)
+{
+	wpas_aidl_notify_permanent_id_req_denied(wpa_s);
+}
+
+
 void wpas_notify_scanning(struct wpa_supplicant *wpa_s)
 {
 	if (wpa_s->p2p_mgmt)
@@ -420,6 +426,14 @@ void wpas_notify_network_removed(struct wpa_supplicant *wpa_s,
 {
 	if (wpa_s->next_ssid == ssid)
 		wpa_s->next_ssid = NULL;
+	if (wpa_s->last_ssid == ssid)
+		wpa_s->last_ssid = NULL;
+	if (wpa_s->current_ssid == ssid)
+		wpa_s->current_ssid = NULL;
+#if defined(CONFIG_SME) && defined(CONFIG_SAE)
+	if (wpa_s->sme.ext_auth_wpa_ssid == ssid)
+		wpa_s->sme.ext_auth_wpa_ssid = NULL;
+#endif /* CONFIG_SME && CONFIG_SAE */
 	if (wpa_s->wpa)
 		wpa_sm_pmksa_cache_flush(wpa_s->wpa, ssid);
 	if (!ssid->p2p_group && wpa_s->global->p2p_group_formation != wpa_s &&
@@ -1095,13 +1109,13 @@ void wpas_notify_mesh_peer_disconnected(struct wpa_supplicant *wpa_s,
 /* DPP Success notifications */
 
 void wpas_notify_dpp_config_received(struct wpa_supplicant *wpa_s,
-	    struct wpa_ssid *ssid)
+	    struct wpa_ssid *ssid, bool conn_status_requested)
 {
 #ifdef CONFIG_DPP
 	if (!wpa_s)
 		return;
 
-	wpas_aidl_notify_dpp_config_received(wpa_s, ssid);
+	wpas_aidl_notify_dpp_config_received(wpa_s, ssid, conn_status_requested);
 #endif /* CONFIG_DPP */
 }
 
@@ -1113,6 +1127,17 @@ void wpas_notify_dpp_config_sent(struct wpa_supplicant *wpa_s)
 
 	wpas_aidl_notify_dpp_config_sent(wpa_s);
 #endif /* CONFIG_DPP */
+}
+
+void wpas_notify_dpp_connection_status_sent(struct wpa_supplicant *wpa_s,
+	    enum dpp_status_error result)
+{
+#ifdef CONFIG_DPP2
+	if (!wpa_s)
+		return;
+
+	wpas_aidl_notify_dpp_connection_status_sent(wpa_s, result);
+#endif /* CONFIG_DPP2 */
 }
 
 /* DPP Progress notifications */
@@ -1326,4 +1351,9 @@ void wpas_notify_frequency_changed(struct wpa_supplicant *wpa_s, int frequency)
 		return;
 
 	wpas_aidl_notify_frequency_changed(wpa_s, frequency);
+}
+
+ssize_t wpas_get_certificate(const char *alias, uint8_t** value)
+{
+	return wpas_aidl_get_certificate(alias, value);
 }

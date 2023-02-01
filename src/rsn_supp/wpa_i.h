@@ -27,6 +27,7 @@ struct wpa_sm {
 	size_t pmk_len;
 	struct wpa_ptk ptk, tptk;
 	int ptk_set, tptk_set;
+	bool tk_set; /* Whether any TK is configured to the driver */
 	unsigned int msg_3_of_4_ok:1;
 	u8 snonce[WPA_NONCE_LEN];
 	u8 anonce[WPA_NONCE_LEN]; /* ANonce from the last 1/4 msg */
@@ -185,6 +186,7 @@ struct wpa_sm {
 	unsigned int oci_freq_override_eapol_g2;
 	unsigned int oci_freq_override_ft_assoc;
 	unsigned int oci_freq_override_fils_assoc;
+	unsigned int disable_eapol_g2_tx;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 #ifdef CONFIG_FILS
@@ -480,6 +482,18 @@ static inline void wpa_sm_store_ptk(struct wpa_sm *sm,
 		sm->ctx->store_ptk(sm->ctx->ctx, addr, cipher, life_time,
 				   ptk);
 }
+
+#ifdef CONFIG_PASN
+static inline int wpa_sm_set_ltf_keyseed(struct wpa_sm *sm, const u8 *own_addr,
+					 const u8 *peer_addr,
+					 size_t ltf_keyseed_len,
+					 const u8 *ltf_keyseed)
+{
+	WPA_ASSERT(sm->ctx->set_ltf_keyseed);
+	return sm->ctx->set_ltf_keyseed(sm->ctx->ctx, own_addr, peer_addr,
+					ltf_keyseed_len, ltf_keyseed);
+}
+#endif /* CONFIG_PASN */
 
 int wpa_eapol_key_send(struct wpa_sm *sm, struct wpa_ptk *ptk,
 		       int ver, const u8 *dest, u16 proto,

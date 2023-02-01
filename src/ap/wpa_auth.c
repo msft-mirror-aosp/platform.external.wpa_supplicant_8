@@ -1,6 +1,6 @@
 /*
  * IEEE 802.11 RSN / WPA Authenticator
- * Copyright (c) 2004-2019, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2022, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -147,6 +147,20 @@ static inline int wpa_auth_set_key(struct wpa_authenticator *wpa_auth,
 	return wpa_auth->cb->set_key(wpa_auth->cb_ctx, vlan_id, alg, addr, idx,
 				     key, key_len, key_flag);
 }
+
+
+#ifdef CONFIG_PASN
+static inline int wpa_auth_set_ltf_keyseed(struct wpa_authenticator *wpa_auth,
+					   const u8 *peer_addr,
+					   const u8 *ltf_keyseed,
+					   size_t ltf_keyseed_len)
+{
+	if (!wpa_auth->cb->set_ltf_keyseed)
+		return -1;
+	return wpa_auth->cb->set_ltf_keyseed(wpa_auth->cb_ctx, peer_addr,
+					     ltf_keyseed, ltf_keyseed_len);
+}
+#endif /* CONFIG_PASN */
 
 
 static inline int wpa_auth_get_seqnum(struct wpa_authenticator *wpa_auth,
@@ -607,7 +621,7 @@ void wpa_deinit(struct wpa_authenticator *wpa_auth)
 	while (group) {
 		prev = group;
 		group = group->next;
-		os_free(prev);
+		bin_clear_free(prev, sizeof(*prev));
 	}
 
 	os_free(wpa_auth);
@@ -735,16 +749,13 @@ static void wpa_free_sta_sm(struct wpa_state_machine *sm)
 {
 #ifdef CONFIG_P2P
 	if (WPA_GET_BE32(sm->ip_addr)) {
-		u32 start;
 		wpa_printf(MSG_DEBUG,
 			   "P2P: Free assigned IP address %u.%u.%u.%u from "
-			   MACSTR,
+			   MACSTR " (bit %u)",
 			   sm->ip_addr[0], sm->ip_addr[1],
 			   sm->ip_addr[2], sm->ip_addr[3],
-			   MAC2STR(sm->addr));
-		start = WPA_GET_BE32(sm->wpa_auth->conf.ip_addr_start);
-		bitfield_clear(sm->wpa_auth->ip_pool,
-			       WPA_GET_BE32(sm->ip_addr) - start);
+			   MAC2STR(sm->addr), sm->ip_addr_bit);
+		bitfield_clear(sm->wpa_auth->ip_pool, sm->ip_addr_bit);
 	}
 #endif /* CONFIG_P2P */
 	if (sm->GUpdateStationKeys) {
@@ -1485,6 +1496,12 @@ static void wpa_send_eapol_timeout(void *eloop_ctx, void *timeout_ctx)
 	struct wpa_authenticator *wpa_auth = eloop_ctx;
 	struct wpa_state_machine *sm = timeout_ctx;
 
+	if (sm->waiting_radius_psk) {
+		wpa_auth_logger(wpa_auth, sm->addr, LOGGER_DEBUG,
+				"Ignore EAPOL-Key timeout while waiting for RADIUS PSK");
+		return;
+	}
+
 	sm->pending_1_of_4_timeout = 0;
 	wpa_auth_logger(wpa_auth, sm->addr, LOGGER_DEBUG, "EAPOL-Key timeout");
 	sm->TimeoutEvt = true;
@@ -1646,7 +1663,7 @@ void __wpa_send_eapol(struct wpa_authenticator *wpa_auth,
 			if (aes_wrap(sm->PTK.kek, sm->PTK.kek_len,
 				     (key_data_len - 8) / 8, buf, key_data)) {
 				os_free(hdr);
-				os_free(buf);
+				bin_clear_free(buf, key_data_len);
 				return;
 			}
 			WPA_PUT_BE16(key_mic + mic_len, key_data_len);
@@ -1667,10 +1684,10 @@ void __wpa_send_eapol(struct wpa_authenticator *wpa_auth,
 #endif /* CONFIG_NO_RC4 */
 		} else {
 			os_free(hdr);
-			os_free(buf);
+			bin_clear_free(buf, key_data_len);
 			return;
 		}
-		os_free(buf);
+		bin_clear_free(buf, key_data_len);
 	}
 
 	if (key_info & WPA_KEY_INFO_MIC) {
@@ -1823,9 +1840,9 @@ int wpa_auth_sm_event(struct wpa_state_machine *sm, enum wpa_event event)
 	case WPA_DEAUTH:
 	case WPA_DISASSOC:
 		sm->DeauthenticationRequest = true;
-#ifdef CONFIG_IEEE80211R_AP
 		os_memset(sm->PMK, 0, sizeof(sm->PMK));
 		sm->pmk_len = 0;
+#ifdef CONFIG_IEEE80211R_AP
 		os_memset(sm->xxkey, 0, sizeof(sm->xxkey));
 		sm->xxkey_len = 0;
 		os_memset(sm->pmk_r1, 0, sizeof(sm->pmk_r1));
@@ -1850,6 +1867,14 @@ int wpa_auth_sm_event(struct wpa_state_machine *sm, enum wpa_event event)
 				return 1; /* should not really happen */
 			sm->Init = false;
 			sm->AuthenticationRequest = true;
+			break;
+		}
+
+		if (sm->ptkstart_without_success > 3) {
+			wpa_printf(MSG_INFO,
+				   "WPA: Multiple EAP reauth attempts without 4-way handshake completion, disconnect "
+				   MACSTR, MAC2STR(sm->addr));
+			sm->Disconnect = true;
 			break;
 		}
 
@@ -2190,11 +2215,13 @@ SM_STATE(WPA_PTK, PTKSTART)
 {
 	u8 buf[2 + RSN_SELECTOR_LEN + PMKID_LEN], *pmkid = NULL;
 	size_t pmkid_len = 0;
+	u16 key_info;
 
 	SM_ENTRY_MA(WPA_PTK, PTKSTART, wpa_ptk);
 	sm->PTKRequest = false;
 	sm->TimeoutEvt = false;
 	sm->alt_snonce_valid = false;
+	sm->ptkstart_without_success++;
 
 	sm->TimeoutCtr++;
 	if (sm->TimeoutCtr > sm->wpa_auth->conf.wpa_pairwise_update_count) {
@@ -2292,8 +2319,10 @@ SM_STATE(WPA_PTK, PTKSTART)
 	}
 	if (!pmkid)
 		pmkid_len = 0;
-	wpa_send_eapol(sm->wpa_auth, sm,
-		       WPA_KEY_INFO_ACK | WPA_KEY_INFO_KEY_TYPE, NULL,
+	key_info = WPA_KEY_INFO_ACK | WPA_KEY_INFO_KEY_TYPE;
+	if (sm->pairwise_set && sm->wpa != WPA_VERSION_WPA)
+		key_info |= WPA_KEY_INFO_SECURE;
+	wpa_send_eapol(sm->wpa_auth, sm, key_info, NULL,
 		       sm->ANonce, pmkid, pmkid_len, 0, 0);
 }
 
@@ -2305,6 +2334,7 @@ static int wpa_derive_ptk(struct wpa_state_machine *sm, const u8 *snonce,
 	const u8 *z = NULL;
 	size_t z_len = 0, kdk_len;
 	int akmp;
+	int ret;
 
 	if (sm->wpa_auth->conf.force_kdk_derivation ||
 	    (sm->wpa_auth->conf.secure_ltf &&
@@ -2318,16 +2348,33 @@ static int wpa_derive_ptk(struct wpa_state_machine *sm, const u8 *snonce,
 		if (sm->ft_completed) {
 			u8 ptk_name[WPA_PMK_NAME_LEN];
 
-			return wpa_pmk_r1_to_ptk(sm->pmk_r1, sm->pmk_r1_len,
-						 sm->SNonce, sm->ANonce,
-						 sm->addr, sm->wpa_auth->addr,
-						 sm->pmk_r1_name,
-						 ptk, ptk_name,
-						 sm->wpa_key_mgmt,
-						 sm->pairwise,
-						 kdk_len);
+			ret = wpa_pmk_r1_to_ptk(sm->pmk_r1, sm->pmk_r1_len,
+						sm->SNonce, sm->ANonce,
+						sm->addr, sm->wpa_auth->addr,
+						sm->pmk_r1_name, ptk,
+						ptk_name, sm->wpa_key_mgmt,
+						sm->pairwise, kdk_len);
+		} else {
+			ret = wpa_auth_derive_ptk_ft(sm, ptk);
 		}
-		return wpa_auth_derive_ptk_ft(sm, ptk);
+		if (ret) {
+			wpa_printf(MSG_ERROR, "FT: PTK derivation failed");
+			return ret;
+		}
+
+#ifdef CONFIG_PASN
+		if (sm->wpa_auth->conf.secure_ltf &&
+		    ieee802_11_rsnx_capab(sm->rsnxe,
+					  WLAN_RSNX_CAPAB_SECURE_LTF)) {
+			ret = wpa_ltf_keyseed(ptk, sm->wpa_key_mgmt,
+					      sm->pairwise);
+			if (ret) {
+				wpa_printf(MSG_ERROR,
+					   "FT: LTF keyseed derivation failed");
+			}
+		}
+#endif /* CONFIG_PASN */
+		return ret;
 	}
 #endif /* CONFIG_IEEE80211R_AP */
 
@@ -2341,9 +2388,27 @@ static int wpa_derive_ptk(struct wpa_state_machine *sm, const u8 *snonce,
 	akmp = sm->wpa_key_mgmt;
 	if (force_sha256)
 		akmp |= WPA_KEY_MGMT_PSK_SHA256;
-	return wpa_pmk_to_ptk(pmk, pmk_len, "Pairwise key expansion",
-			      sm->wpa_auth->addr, sm->addr, sm->ANonce, snonce,
-			      ptk, akmp, sm->pairwise, z, z_len, kdk_len);
+	ret = wpa_pmk_to_ptk(pmk, pmk_len, "Pairwise key expansion",
+			     sm->wpa_auth->addr, sm->addr, sm->ANonce,
+			     snonce, ptk, akmp, sm->pairwise, z, z_len,
+			     kdk_len);
+	if (ret) {
+		wpa_printf(MSG_DEBUG,
+			   "WPA: PTK derivation failed");
+		return ret;
+	}
+
+#ifdef CONFIG_PASN
+	if (sm->wpa_auth->conf.secure_ltf &&
+	    ieee802_11_rsnx_capab(sm->rsnxe, WLAN_RSNX_CAPAB_SECURE_LTF)) {
+		ret = wpa_ltf_keyseed(ptk, sm->wpa_key_mgmt, sm->pairwise);
+		if (ret) {
+			wpa_printf(MSG_DEBUG,
+				   "WPA: LTF keyseed derivation failed");
+		}
+	}
+#endif /* CONFIG_PASN */
+	return ret;
 }
 
 
@@ -2374,6 +2439,19 @@ int fils_auth_pmk_to_ptk(struct wpa_state_machine *sm, const u8 *pmk,
 			      fils_ft, &fils_ft_len, kdk_len);
 	if (res < 0)
 		return res;
+
+#ifdef CONFIG_PASN
+	if (sm->wpa_auth->conf.secure_ltf &&
+	    ieee802_11_rsnx_capab(sm->rsnxe, WLAN_RSNX_CAPAB_SECURE_LTF)) {
+		res = wpa_ltf_keyseed(&sm->PTK, sm->wpa_key_mgmt, sm->pairwise);
+		if (res) {
+			wpa_printf(MSG_ERROR,
+				   "FILS: LTF keyseed derivation failed");
+			return res;
+		}
+	}
+#endif /* CONFIG_PASN */
+
 	sm->PTK_valid = true;
 	sm->tk_already_set = false;
 
@@ -2877,6 +2955,20 @@ int fils_set_tk(struct wpa_state_machine *sm)
 		wpa_printf(MSG_DEBUG, "FILS: Failed to set TK to the driver");
 		return -1;
 	}
+
+#ifdef CONFIG_PASN
+	if (sm->wpa_auth->conf.secure_ltf &&
+	    ieee802_11_rsnx_capab(sm->rsnxe, WLAN_RSNX_CAPAB_SECURE_LTF) &&
+	    wpa_auth_set_ltf_keyseed(sm->wpa_auth, sm->addr,
+				     sm->PTK.ltf_keyseed,
+				     sm->PTK.ltf_keyseed_len)) {
+		wpa_printf(MSG_ERROR,
+			   "FILS: Failed to set LTF keyseed to driver");
+		return -1;
+	}
+#endif /* CONFIG_PASN */
+
+	sm->pairwise_set = true;
 	sm->tk_already_set = true;
 
 	wpa_auth_store_ptksa(sm->wpa_auth, sm->addr, sm->pairwise,
@@ -3026,6 +3118,19 @@ SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
 			break;
 	}
 
+	if (!ok && wpa_key_mgmt_wpa_psk_no_sae(sm->wpa_key_mgmt) &&
+	    wpa_auth->conf.radius_psk && wpa_auth->cb->request_radius_psk &&
+	    !sm->waiting_radius_psk) {
+		wpa_printf(MSG_DEBUG, "No PSK available - ask RADIUS server");
+		wpa_auth->cb->request_radius_psk(wpa_auth->cb_ctx, sm->addr,
+						 sm->wpa_key_mgmt,
+						 sm->ANonce,
+						 sm->last_rx_eapol_key,
+						 sm->last_rx_eapol_key_len);
+		sm->waiting_radius_psk = 1;
+		return;
+	}
+
 	if (!ok) {
 		wpa_auth_logger(sm->wpa_auth, sm->addr, LOGGER_DEBUG,
 				"invalid MIC in msg 2/4 of 4-Way Handshake");
@@ -3150,12 +3255,14 @@ SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
 		if (idx >= 0) {
 			u32 start = WPA_GET_BE32(wpa_auth->conf.ip_addr_start);
 			bitfield_set(wpa_auth->ip_pool, idx);
+			sm->ip_addr_bit = idx;
 			WPA_PUT_BE32(sm->ip_addr, start + idx);
 			wpa_printf(MSG_DEBUG,
 				   "P2P: Assigned IP address %u.%u.%u.%u to "
-				   MACSTR, sm->ip_addr[0], sm->ip_addr[1],
+				   MACSTR " (bit %u)",
+				   sm->ip_addr[0], sm->ip_addr[1],
 				   sm->ip_addr[2], sm->ip_addr[3],
-				   MAC2STR(sm->addr));
+				   MAC2STR(sm->addr), sm->ip_addr_bit);
 		}
 	}
 #endif /* CONFIG_P2P */
@@ -3279,6 +3386,7 @@ static u8 * ieee80211w_kde_add(struct wpa_state_machine *sm, u8 *pos)
 	pos = wpa_add_kde(pos, RSN_KEY_DATA_IGTK,
 			  (const u8 *) &igtk, WPA_IGTK_KDE_PREFIX_LEN + len,
 			  NULL, 0);
+	forced_memzero(&igtk, sizeof(igtk));
 
 	if (!conf->beacon_prot)
 		return pos;
@@ -3302,6 +3410,7 @@ static u8 * ieee80211w_kde_add(struct wpa_state_machine *sm, u8 *pos)
 	pos = wpa_add_kde(pos, RSN_KEY_DATA_BIGTK,
 			  (const u8 *) &bigtk, WPA_BIGTK_KDE_PREFIX_LEN + len,
 			  NULL, 0);
+	forced_memzero(&bigtk, sizeof(bigtk));
 
 	return pos;
 }
@@ -3382,7 +3491,7 @@ static u8 * replace_ie(const char *name, const u8 *old_buf, size_t *len, u8 eid,
 SM_STATE(WPA_PTK, PTKINITNEGOTIATING)
 {
 	u8 rsc[WPA_KEY_RSC_LEN], *_rsc, *gtk, *kde = NULL, *pos, stub_gtk[32];
-	size_t gtk_len, kde_len, wpa_ie_len;
+	size_t gtk_len, kde_len = 0, wpa_ie_len;
 	struct wpa_group *gsm = sm->group;
 	u8 *wpa_ie;
 	int secure, gtkidx, encr = 0;
@@ -3456,6 +3565,21 @@ SM_STATE(WPA_PTK, PTKINITNEGOTIATING)
 					   WLAN_REASON_PREV_AUTH_NOT_VALID);
 			return;
 		}
+
+#ifdef CONFIG_PASN
+		if (sm->wpa_auth->conf.secure_ltf &&
+		    ieee802_11_rsnx_capab(sm->rsnxe,
+					  WLAN_RSNX_CAPAB_SECURE_LTF) &&
+		    wpa_auth_set_ltf_keyseed(sm->wpa_auth, sm->addr,
+					     sm->PTK.ltf_keyseed,
+					     sm->PTK.ltf_keyseed_len)) {
+			wpa_printf(MSG_ERROR,
+				   "WPA: Failed to set LTF keyseed to driver");
+			wpa_sta_disconnect(sm->wpa_auth, sm->addr,
+					   WLAN_REASON_PREV_AUTH_NOT_VALID);
+			return;
+		}
+#endif /* CONFIG_PASN */
 
 		/* WPA2 send GTK in the 4-way handshake */
 		secure = 1;
@@ -3640,7 +3764,7 @@ SM_STATE(WPA_PTK, PTKINITNEGOTIATING)
 		       WPA_KEY_INFO_KEY_TYPE,
 		       _rsc, sm->ANonce, kde, pos - kde, 0, encr);
 done:
-	os_free(kde);
+	bin_clear_free(kde, kde_len);
 	os_free(wpa_ie_buf);
 	os_free(wpa_ie_buf2);
 }
@@ -3668,6 +3792,22 @@ SM_STATE(WPA_PTK, PTKINITDONE)
 					   WLAN_REASON_PREV_AUTH_NOT_VALID);
 			return;
 		}
+
+#ifdef CONFIG_PASN
+		if (sm->wpa_auth->conf.secure_ltf &&
+		    ieee802_11_rsnx_capab(sm->rsnxe,
+					  WLAN_RSNX_CAPAB_SECURE_LTF) &&
+		    wpa_auth_set_ltf_keyseed(sm->wpa_auth, sm->addr,
+					     sm->PTK.ltf_keyseed,
+					     sm->PTK.ltf_keyseed_len)) {
+			wpa_printf(MSG_ERROR,
+				   "WPA: Failed to set LTF keyseed to driver");
+			wpa_sta_disconnect(sm->wpa_auth, sm->addr,
+					   WLAN_REASON_PREV_AUTH_NOT_VALID);
+			return;
+		}
+#endif /* CONFIG_PASN */
+
 		/* FIX: MLME-SetProtection.Request(TA, Tx_Rx) */
 		sm->pairwise_set = true;
 
@@ -3709,6 +3849,8 @@ SM_STATE(WPA_PTK, PTKINITDONE)
 #ifdef CONFIG_IEEE80211R_AP
 	wpa_ft_push_pmk_r1(sm->wpa_auth, sm->addr);
 #endif /* CONFIG_IEEE80211R_AP */
+
+	sm->ptkstart_without_success = 0;
 }
 
 
@@ -3783,6 +3925,11 @@ SM_STEP(WPA_PTK)
 		} else if (wpa_auth_uses_sae(sm) && sm->pmksa) {
 			SM_ENTER(WPA_PTK, PTKSTART);
 #endif /* CONFIG_SAE */
+		} else if (wpa_key_mgmt_wpa_psk_no_sae(sm->wpa_key_mgmt) &&
+			   wpa_auth->conf.radius_psk) {
+			wpa_printf(MSG_DEBUG,
+				   "INITPSK: No PSK yet available for STA - use RADIUS later");
+			SM_ENTER(WPA_PTK, PTKSTART);
 		} else {
 			wpa_auth_logger(wpa_auth, sm->addr, LOGGER_INFO,
 					"no PSK configured for the STA");
@@ -3861,7 +4008,7 @@ SM_STATE(WPA_PTK_GROUP, REKEYNEGOTIATING)
 	struct wpa_group *gsm = sm->group;
 	const u8 *kde;
 	u8 *kde_buf = NULL, *pos, hdr[2];
-	size_t kde_len;
+	size_t kde_len = 0;
 	u8 *gtk, stub_gtk[32];
 	struct wpa_auth_config *conf = &sm->wpa_auth->conf;
 
@@ -3930,7 +4077,7 @@ SM_STATE(WPA_PTK_GROUP, REKEYNEGOTIATING)
 		       (!sm->Pair ? WPA_KEY_INFO_INSTALL : 0),
 		       rsc, NULL, kde, kde_len, gsm->GN, 1);
 
-	os_free(kde_buf);
+	bin_clear_free(kde_buf, kde_len);
 }
 
 
@@ -4829,16 +4976,17 @@ int wpa_auth_pmksa_add_preauth(struct wpa_authenticator *wpa_auth,
 
 
 int wpa_auth_pmksa_add_sae(struct wpa_authenticator *wpa_auth, const u8 *addr,
-			   const u8 *pmk, const u8 *pmkid)
+			   const u8 *pmk, size_t pmk_len, const u8 *pmkid,
+			   int akmp)
 {
 	if (wpa_auth->conf.disable_pmksa_caching)
 		return -1;
 
-	wpa_hexdump_key(MSG_DEBUG, "RSN: Cache PMK from SAE", pmk, PMK_LEN);
-	if (pmksa_cache_auth_add(wpa_auth->pmksa, pmk, PMK_LEN, pmkid,
-				 NULL, 0,
-				 wpa_auth->addr, addr, 0, NULL,
-				 WPA_KEY_MGMT_SAE))
+	wpa_hexdump_key(MSG_DEBUG, "RSN: Cache PMK from SAE", pmk, pmk_len);
+	if (!akmp)
+		akmp = WPA_KEY_MGMT_SAE;
+	if (pmksa_cache_auth_add(wpa_auth->pmksa, pmk, pmk_len, pmkid,
+				 NULL, 0, wpa_auth->addr, addr, 0, NULL, akmp))
 		return 0;
 
 	return -1;
@@ -4916,13 +5064,14 @@ int wpa_auth_pmksa_list_mesh(struct wpa_authenticator *wpa_auth, const u8 *addr,
 
 struct rsn_pmksa_cache_entry *
 wpa_auth_pmksa_create_entry(const u8 *aa, const u8 *spa, const u8 *pmk,
+			    size_t pmk_len, int akmp,
 			    const u8 *pmkid, int expiration)
 {
 	struct rsn_pmksa_cache_entry *entry;
 	struct os_reltime now;
 
-	entry = pmksa_cache_auth_create_entry(pmk, PMK_LEN, pmkid, NULL, 0, aa,
-					      spa, 0, NULL, WPA_KEY_MGMT_SAE);
+	entry = pmksa_cache_auth_create_entry(pmk, pmk_len, pmkid, NULL, 0, aa,
+					      spa, 0, NULL, akmp);
 	if (!entry)
 		return NULL;
 
@@ -5236,7 +5385,8 @@ int wpa_auth_uses_ft_sae(struct wpa_state_machine *sm)
 {
 	if (!sm)
 		return 0;
-	return sm->wpa_key_mgmt == WPA_KEY_MGMT_FT_SAE;
+	return sm->wpa_key_mgmt == WPA_KEY_MGMT_FT_SAE ||
+		sm->wpa_key_mgmt == WPA_KEY_MGMT_FT_SAE_EXT_KEY;
 }
 
 
@@ -5572,7 +5722,7 @@ int wpa_auth_resend_m3(struct wpa_state_machine *sm,
 		       WPA_KEY_INFO_ACK | WPA_KEY_INFO_INSTALL |
 		       WPA_KEY_INFO_KEY_TYPE,
 		       _rsc, sm->ANonce, kde, pos - kde, 0, encr);
-	os_free(kde);
+	bin_clear_free(kde, kde_len);
 	return 0;
 }
 
@@ -5640,7 +5790,7 @@ int wpa_auth_resend_group_m1(struct wpa_state_machine *sm,
 		       (!sm->Pair ? WPA_KEY_INFO_INSTALL : 0),
 		       rsc, NULL, kde, kde_len, gsm->GN, 1);
 
-	os_free(kde_buf);
+	bin_clear_free(kde_buf, kde_len);
 	return 0;
 }
 
@@ -5711,3 +5861,28 @@ void wpa_auth_set_enable_eapol_large_timeout(struct wpa_authenticator *wpa_auth,
 
 
 #endif /* CONFIG_TESTING_OPTIONS */
+
+
+void wpa_auth_sta_radius_psk_resp(struct wpa_state_machine *sm, bool success)
+{
+	if (!sm->waiting_radius_psk) {
+		wpa_printf(MSG_DEBUG,
+			   "Ignore RADIUS PSK response for " MACSTR
+			   " that did not wait one",
+			   MAC2STR(sm->addr));
+		return;
+	}
+
+	wpa_printf(MSG_DEBUG, "RADIUS PSK response for " MACSTR " (%s)",
+		   MAC2STR(sm->addr), success ? "success" : "fail");
+	sm->waiting_radius_psk = 0;
+
+	if (success) {
+		/* Try to process the EAPOL-Key msg 2/4 again */
+		sm->EAPOLKeyReceived = true;
+	} else {
+		sm->Disconnect = true;
+	}
+
+	eloop_register_timeout(0, 0, wpa_sm_call_step, sm, NULL);
+}

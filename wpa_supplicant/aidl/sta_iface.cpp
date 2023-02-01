@@ -50,6 +50,7 @@ enum WifiChannelWidthInMhz {
   WIDTH_80P80 = 4,
   WIDTH_5	 = 5,
   WIDTH_10	= 6,
+  WIDTH_320	= 7,
   WIDTH_INVALID = -1
 };
 
@@ -810,6 +811,40 @@ bool StaIface::isValid()
 		&StaIface::getConnectionMloLinksInfoInternal, _aidl_return);
 }
 
+::ndk::ScopedAStatus StaIface::getSignalPollResults(
+    std::vector<SignalPollResult> *results)
+{
+	return validateAndCall(
+	    this, SupplicantStatusCode::FAILURE_UNKNOWN,
+	    &StaIface::getSignalPollResultsInternal, results);
+}
+
+::ndk::ScopedAStatus StaIface::addQosPolicyRequestForScs(
+		const std::vector<QosPolicyScsData>& in_qosPolicyData,
+		std::vector<QosPolicyScsRequestStatus>* _aidl_return)
+{
+	return validateAndCall(
+	    this, SupplicantStatusCode::FAILURE_UNKNOWN,
+	    &StaIface::addQosPolicyRequestForScsInternal, _aidl_return, in_qosPolicyData);
+}
+
+::ndk::ScopedAStatus StaIface::removeQosPolicyForScs(
+		const std::vector<uint8_t>& in_scsPolicyIds,
+		std::vector<QosPolicyScsRequestStatus>* _aidl_return)
+{
+	return validateAndCall(
+	    this, SupplicantStatusCode::FAILURE_UNKNOWN,
+	    &StaIface::removeQosPolicyForScsInternal, _aidl_return, in_scsPolicyIds);
+}
+
+::ndk::ScopedAStatus StaIface::removeAllQosPoliciesForScs(
+		std::vector<QosPolicyScsRequestStatus>* _aidl_return)
+{
+	return validateAndCall(
+	    this, SupplicantStatusCode::FAILURE_UNKNOWN,
+	    &StaIface::removeAllQosPoliciesForScsInternal, _aidl_return);
+}
+
 std::pair<std::string, ndk::ScopedAStatus> StaIface::getNameInternal()
 {
 	return {ifname_, ndk::ScopedAStatus::ok()};
@@ -986,6 +1021,9 @@ ndk::ScopedAStatus StaIface::initiateTdlsDiscoverInternal(
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	int ret;
+	if (mac_address.size() != ETH_ALEN) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 	const u8 *peer = mac_address.data();
 	if (wpa_tdls_is_external_setup(wpa_s->wpa)) {
 		ret = wpa_tdls_send_discovery_request(wpa_s->wpa, peer);
@@ -1003,6 +1041,9 @@ ndk::ScopedAStatus StaIface::initiateTdlsSetupInternal(
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	int ret;
+	if (mac_address.size() != ETH_ALEN) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 	const u8 *peer = mac_address.data();
 	if (wpa_tdls_is_external_setup(wpa_s->wpa) &&
 		!(wpa_s->conf->tdls_external_control)) {
@@ -1022,6 +1063,9 @@ ndk::ScopedAStatus StaIface::initiateTdlsTeardownInternal(
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	int ret;
+	if (mac_address.size() != ETH_ALEN) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 	const u8 *peer = mac_address.data();
 	if (wpa_tdls_is_external_setup(wpa_s->wpa) &&
 		!(wpa_s->conf->tdls_external_control)) {
@@ -1058,6 +1102,9 @@ ndk::ScopedAStatus StaIface::initiateAnqpQueryInternal(
 			static_cast<std::underlying_type<
 			Hs20AnqpSubtypes>::type>(type));
 	}
+	if (mac_address.size() != ETH_ALEN) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 
 	if (anqp_send_req(
 		wpa_s, mac_address.data(), 0, info_elems_buf, num_info_elems,
@@ -1072,6 +1119,9 @@ ndk::ScopedAStatus StaIface::initiateVenueUrlAnqpQueryInternal(
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	uint16_t info_elems_buf[1] = {ANQP_VENUE_URL};
+	if (mac_address.size() != ETH_ALEN) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 
 	if (anqp_send_req(
 		wpa_s, mac_address.data(), 0, info_elems_buf, 1, 0, 0)) {
@@ -1084,6 +1134,9 @@ ndk::ScopedAStatus StaIface::initiateHs20IconQueryInternal(
 	const std::vector<uint8_t> &mac_address, const std::string &file_name)
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	if (mac_address.size() != ETH_ALEN) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 	wpa_s->fetch_osu_icon_in_progress = 0;
 	if (hs20_anqp_send_req(
 		wpa_s, mac_address.data(), BIT(HS20_STYPE_ICON_REQUEST),
@@ -1185,6 +1238,10 @@ ndk::ScopedAStatus StaIface::setCountryCodeInternal(
 	const std::vector<uint8_t> &code)
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	//2-Character alphanumeric country code
+	if (code.size() != 2) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 	ndk::ScopedAStatus status = doOneArgDriverCommand(
 		wpa_s, kSetCountryCode,
 		std::string(std::begin(code), std::end(code)));
@@ -1206,6 +1263,9 @@ ndk::ScopedAStatus StaIface::startWpsRegistrarInternal(
 	const std::vector<uint8_t> &bssid, const std::string &pin)
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	if (bssid.size() != ETH_ALEN) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 	if (wpas_wps_start_reg(wpa_s, bssid.data(), pin.c_str(), nullptr)) {
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
@@ -1216,6 +1276,9 @@ ndk::ScopedAStatus StaIface::startWpsPbcInternal(
 	const std::vector<uint8_t> &bssid)
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	if (bssid.size() != ETH_ALEN) {
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
 	const uint8_t *bssid_addr =
 		is_zero_ether_addr(bssid.data()) ? nullptr : bssid.data();
 	if (wpas_wps_start_pbc(wpa_s, bssid_addr, 0, 0)) {
@@ -1238,6 +1301,9 @@ std::pair<std::string, ndk::ScopedAStatus> StaIface::startWpsPinDisplayInternal(
 	const std::vector<uint8_t> &bssid)
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	if (bssid.size() != ETH_ALEN) {
+		return {"", createStatus(SupplicantStatusCode::FAILURE_UNKNOWN)};
+	}
 	const uint8_t *bssid_addr =
 		is_zero_ether_addr(bssid.data()) ? nullptr : bssid.data();
 	int pin =
@@ -1609,6 +1675,9 @@ StaIface::generateDppBootstrapInfoForResponderInternal(
 	}
 	cmd += " chan=" + listen_channel_str;
 
+	if (mac_address.size() != ETH_ALEN) {
+		return {bootstrap_info, createStatus(SupplicantStatusCode::FAILURE_UNKNOWN)};
+	}
 	cmd += " mac=";
 	for (int i = 0;i < 6;i++) {
 		snprintf(buf, sizeof(buf), "%02x", mac_address[i]);
@@ -1747,7 +1816,9 @@ StaIface::getConnectionCapabilitiesInternal()
 
 	if (wpa_s->connection_set) {
 		capa.legacyMode = LegacyMode::UNKNOWN;
-		if (wpa_s->connection_he) {
+		if (wpa_s->connection_eht) {
+			capa.technology = WifiTechnology::EHT;
+		} else if (wpa_s->connection_he) {
 			capa.technology = WifiTechnology::HE;
 		} else if (wpa_s->connection_vht) {
 			capa.technology = WifiTechnology::VHT;
@@ -1777,6 +1848,9 @@ StaIface::getConnectionCapabilitiesInternal()
 			break;
 		case CHAN_WIDTH_80P80:
 			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_80P80;
+			break;
+		case CHAN_WIDTH_320:
+			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_320;
 			break;
 		default:
 			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_20;
@@ -1816,6 +1890,12 @@ StaIface::getWpaDriverCapabilitiesInternal()
 	mask |= static_cast<uint32_t>(WpaDriverCapabilitiesMask::WFD_R2);
 
 	mask |= static_cast<uint32_t>(WpaDriverCapabilitiesMask::TRUST_ON_FIRST_USE);
+
+	mask |= static_cast<uint32_t>(WpaDriverCapabilitiesMask::SET_TLS_MINIMUM_VERSION);
+
+#ifdef EAP_TLSV1_3
+	mask |= static_cast<uint32_t>(WpaDriverCapabilitiesMask::TLS_V1_3);
+#endif
 
 	wpa_printf(MSG_DEBUG, "Driver capability mask: 0x%x", mask);
 
@@ -1930,8 +2010,95 @@ ndk::ScopedAStatus StaIface::removeAllQosPoliciesInternal()
 
 std::pair<MloLinksInfo, ndk::ScopedAStatus> StaIface::getConnectionMloLinksInfoInternal()
 {
+	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	MloLinksInfo linksInfo;
+	MloLink link;
+
+	if (!wpa_s->valid_links)
+		 return {linksInfo, ndk::ScopedAStatus::ok()};
+
+	for (int i = 0; i < MAX_NUM_MLD_LINKS; i++) {
+		if (!(wpa_s->valid_links & BIT(i)))
+			continue;
+
+		wpa_printf(MSG_DEBUG, "Add MLO Link ID %d info", i);
+		link.linkId = i;
+		link.staLinkMacAddress.assign(wpa_s->links[i].addr, wpa_s->links[i].addr + ETH_ALEN);
+		// TODO (b/259710591): Once suppllicant implements TID-to-link
+		// mapping, copy it here. Mapping can be changed in two
+		// scenarios
+		//    1. Mandatory mapping from AP
+		//    2. Negotiated mapping
+		// After association, framework call this API to get
+		// MloLinksInfo. If there is an update in mapping later, notify
+		// framework on the change using the callback,
+		// ISupplicantStaIfaceCallback.onMloLinksInfoChanged() with
+		// reason code as TID_TO_LINK_MAP. In absence of an advertised
+		// mapping by the AP, a default TID-to-link mapping is assumed
+		// unless an individual TID-to-link mapping is successfully
+		// negotiated.
+		link.tidsUplinkMap = 0xFF;
+		link.tidsDownlinkMap = 0xFF;
+		linksInfo.links.push_back(link);
+	}
+
 	return {linksInfo, ndk::ScopedAStatus::ok()};
+}
+
+std::pair<std::vector<SignalPollResult>, ndk::ScopedAStatus>
+StaIface::getSignalPollResultsInternal()
+{
+	std::vector<SignalPollResult> results;
+	struct wpa_signal_info si;
+	struct wpa_mlo_signal_info mlo_si;
+	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+
+	if (wpa_s->valid_links && wpa_drv_mlo_signal_poll(wpa_s, &mlo_si)) {
+		for (int i = 0; i < MAX_NUM_MLD_LINKS; i++) {
+			if (!(mlo_si.valid_links & BIT(i)))
+				continue;
+
+			SignalPollResult result;
+			result.linkId = 0;
+			result.currentRssiDbm = mlo_si.links[i].current_signal;
+			result.txBitrateMbps = mlo_si.links[i].current_txrate / 1000;
+			result.rxBitrateMbps = mlo_si.links[i].current_rxrate / 1000;
+			result.frequencyMhz = mlo_si.links[i].frequency;
+			results.push_back(result);
+		}
+	} else if (wpa_drv_signal_poll(wpa_s, &si) == 0) {
+		SignalPollResult result;
+		result.linkId = 0;
+		result.currentRssiDbm = si.current_signal;
+		result.txBitrateMbps = si.current_txrate / 1000;
+		result.rxBitrateMbps = si.current_rxrate / 1000;
+		result.frequencyMhz = si.frequency;
+		results.push_back(result);
+	}
+
+	return {results, ndk::ScopedAStatus::ok()};
+}
+
+
+std::pair<std::vector<QosPolicyScsRequestStatus>, ndk::ScopedAStatus>
+StaIface::addQosPolicyRequestForScsInternal(const std::vector<QosPolicyScsData>& qosPolicyData)
+{
+	return {std::vector<QosPolicyScsRequestStatus>(),
+		createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED)};
+}
+
+std::pair<std::vector<QosPolicyScsRequestStatus>, ndk::ScopedAStatus>
+StaIface::removeQosPolicyForScsInternal(const std::vector<uint8_t>& scsPolicyIds)
+{
+	return {std::vector<QosPolicyScsRequestStatus>(),
+		createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED)};
+}
+
+std::pair<std::vector<QosPolicyScsRequestStatus>, ndk::ScopedAStatus>
+StaIface::removeAllQosPoliciesForScsInternal()
+{
+	return {std::vector<QosPolicyScsRequestStatus>(),
+		createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED)};
 }
 
 /**

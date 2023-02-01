@@ -444,16 +444,63 @@ static void wpa_supplicant_optimize_freqs(
 
 	if (params->freqs == NULL && wpa_s->p2p_in_invitation) {
 		/*
+		 * Perform a single-channel scan if the GO has already been
+		 * discovered on another non-P2P interface. Note that a scan
+		 * initiated by a P2P interface (e.g. the device interface)
+		 * should already have sufficient IEs and scan results will be
+		 * fetched on interface creation in that case.
+		 */
+		if (wpa_s->p2p_in_invitation == 1 && wpa_s->current_ssid) {
+			struct wpa_supplicant *ifs;
+			struct wpa_bss *bss = NULL;
+			struct wpa_ssid *ssid = wpa_s->current_ssid;
+			u8 *bssid = ssid->bssid_set ? ssid->bssid : NULL;
+			dl_list_for_each(ifs, &wpa_s->radio->ifaces,
+					 struct wpa_supplicant, radio_list) {
+				bss = wpa_bss_get(ifs, bssid, ssid->ssid,
+						  ssid->ssid_len);
+				if (bss)
+					break;
+			}
+			if (bss && !disabled_freq(wpa_s, bss->freq)) {
+				params->freqs = os_calloc(2, sizeof(int));
+				if (params->freqs)
+					params->freqs[0] = bss->freq;
+			}
+		}
+		/*
 		 * Optimize scan based on GO information during persistent
 		 * group reinvocation
 		 */
-		if (wpa_s->p2p_in_invitation < 5 &&
+		if (params->freqs == NULL && wpa_s->p2p_in_invitation < 5 &&
 		    wpa_s->p2p_invite_go_freq > 0) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Scan only GO preferred frequency %d MHz during invitation",
-				wpa_s->p2p_invite_go_freq);
-			params->freqs = os_calloc(2, sizeof(int));
-			if (params->freqs)
-				params->freqs[0] = wpa_s->p2p_invite_go_freq;
+			if (wpa_s->p2p_invite_go_freq == 2 ||
+			    wpa_s->p2p_invite_go_freq == 5) {
+				wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Scan only GO preferred band %d GHz during invitation",
+					wpa_s->p2p_invite_go_freq);
+				enum hostapd_hw_mode mode;
+				if (wpa_s->hw.modes == NULL)
+					return;
+				mode = wpa_s->p2p_invite_go_freq == 5 ?
+				       HOSTAPD_MODE_IEEE80211A :
+				       HOSTAPD_MODE_IEEE80211G;
+				if (wpa_s->p2p_in_invitation <= 2)
+					wpa_add_scan_freqs_list(wpa_s, mode,
+								params, false,
+								true);
+				if (params->freqs == NULL ||
+				    (params->freqs && params->freqs[0] == 0))
+					wpa_add_scan_freqs_list(wpa_s, mode,
+								params, false,
+								false);
+			} else {
+				wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Scan only GO preferred frequency %d MHz during invitation",
+					wpa_s->p2p_invite_go_freq);
+				params->freqs = os_calloc(2, sizeof(int));
+				if (params->freqs)
+					params->freqs[0] =
+					    wpa_s->p2p_invite_go_freq;
+			}
 		}
 		wpa_s->p2p_in_invitation++;
 		if (wpa_s->p2p_in_invitation > 20) {
@@ -465,6 +512,7 @@ static void wpa_supplicant_optimize_freqs(
 			 */
 			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Clear p2p_in_invitation");
 			wpa_s->p2p_in_invitation = 0;
+			wpa_s->p2p_retry_limit = 0;
 		}
 	}
 #endif /* CONFIG_P2P */
@@ -709,7 +757,8 @@ static int non_p2p_network_enabled(struct wpa_supplicant *wpa_s)
 
 int wpa_add_scan_freqs_list(struct wpa_supplicant *wpa_s,
 			    enum hostapd_hw_mode band,
-			    struct wpa_driver_scan_params *params, bool is_6ghz)
+			    struct wpa_driver_scan_params *params, bool is_6ghz,
+			    bool exclude_radar)
 {
 	/* Include only supported channels for the specified band */
 	struct hostapd_hw_modes *mode;
@@ -734,6 +783,8 @@ int wpa_add_scan_freqs_list(struct wpa_supplicant *wpa_s,
 	for (i = 0; i < mode->num_channels; i++) {
 		if (mode->channels[i].flag & HOSTAPD_CHAN_DISABLED)
 			continue;
+		if (exclude_radar && (mode->channels[i].flag & HOSTAPD_CHAN_RADAR))
+			continue;
 		params->freqs[num_chans++] = mode->channels[i].freq;
 	}
 	params->freqs[num_chans] = 0;
@@ -752,13 +803,13 @@ static void wpa_setband_scan_freqs(struct wpa_supplicant *wpa_s,
 
 	if (wpa_s->setband_mask & WPA_SETBAND_5G)
 		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211A, params,
-					false);
+					false, false);
 	if (wpa_s->setband_mask & WPA_SETBAND_2G)
 		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211G, params,
-					false);
+					false, false);
 	if (wpa_s->setband_mask & WPA_SETBAND_6G)
 		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211A, params,
-					true);
+					true, false);
 }
 
 
@@ -1036,19 +1087,6 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	}
 
 #ifdef CONFIG_P2P
-#ifdef ANDROID
-	if (wpa_s->global->p2p_go_found_external_scan &&
-	    (wpa_s->p2p_group_interface == P2P_GROUP_INTERFACE_CLIENT) &&
-	    (wpa_s->global->p2p_group_formation == wpa_s)) {
-		wpa_dbg(wpa_s, MSG_DEBUG,
-			"Try to fast associate since GO is found in external scan");
-		wpa_s->global->p2p_go_found_external_scan = 0;
-		if (wpa_supplicant_fast_associate(wpa_s) >= 0) {
-			return;
-		}
-	}
-#endif
-
 	if ((wpa_s->p2p_in_provisioning || wpa_s->show_group_started) &&
 	    wpa_s->go_params && !wpa_s->conf->passive_scan) {
 		wpa_printf(MSG_DEBUG, "P2P: Use specific SSID for scan during P2P group formation (p2p_in_provisioning=%d show_group_started=%d)",
@@ -1341,6 +1379,12 @@ ssid_list_set:
 		}
 	}
 
+	if (wpa_s->last_scan_req == MANUAL_SCAN_REQ &&
+	    wpa_s->manual_non_coloc_6ghz) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Collocated 6 GHz logic is disabled");
+		params.non_coloc_6ghz = 1;
+	}
+
 	scan_params = &params;
 
 scan:
@@ -1378,15 +1422,13 @@ scan:
 	    (wpa_s->p2p_in_invitation || wpa_s->p2p_in_provisioning) &&
 	    !is_p2p_allow_6ghz(wpa_s->global->p2p) &&
 	    is_6ghz_supported(wpa_s)) {
-		int i;
-
 		/* Exclude 6 GHz channels from the full scan for P2P connection
 		 * since the 6 GHz band is disabled for P2P uses. */
 		wpa_printf(MSG_DEBUG,
 			   "P2P: 6 GHz disabled - update the scan frequency list");
-		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211G, &params, false);
-		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211A, &params, false);
-		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211AD, &params, false);
+		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211G, &params, false, false);
+		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211A, &params, false, false);
+		wpa_add_scan_freqs_list(wpa_s, HOSTAPD_MODE_IEEE80211AD, &params, false, false);
 	}
 #endif /* CONFIG_P2P */
 
@@ -1939,6 +1981,18 @@ const u8 * wpa_scan_get_ie(const struct wpa_scan_res *res, u8 ie)
 }
 
 
+const u8 * wpa_scan_get_ml_ie(const struct wpa_scan_res *res, u8 type)
+{
+	size_t ie_len = res->ie_len;
+
+	/* Use the Beacon frame IEs if res->ie_len is not available */
+	if (!ie_len)
+		ie_len = res->beacon_ie_len;
+
+	return get_ml_ie((const u8 *) (res + 1), ie_len, type);
+}
+
+
 /**
  * wpa_scan_get_vendor_ie - Fetch vendor information element from a scan result
  * @res: Scan result entry
@@ -2181,20 +2235,33 @@ static void dump_scan_res(struct wpa_scan_results *scan_res)
 	for (i = 0; i < scan_res->num; i++) {
 		struct wpa_scan_res *r = scan_res->res[i];
 		u8 *pos;
+		const u8 *ssid_ie, *ssid = NULL;
+		size_t ssid_len = 0;
+
+		ssid_ie = wpa_scan_get_ie(r, WLAN_EID_SSID);
+		if (ssid_ie) {
+			ssid = ssid_ie + 2;
+			ssid_len = ssid_ie[1];
+		}
+
 		if (r->flags & WPA_SCAN_LEVEL_DBM) {
 			int noise_valid = !(r->flags & WPA_SCAN_NOISE_INVALID);
 
-			wpa_printf(MSG_EXCESSIVE, MACSTR " freq=%d qual=%d "
-				   "noise=%d%s level=%d snr=%d%s flags=0x%x age=%u est=%u",
-				   MAC2STR(r->bssid), r->freq, r->qual,
+			wpa_printf(MSG_EXCESSIVE, MACSTR
+				   " ssid=%s freq=%d qual=%d noise=%d%s level=%d snr=%d%s flags=0x%x age=%u est=%u",
+				   MAC2STR(r->bssid),
+				   wpa_ssid_txt(ssid, ssid_len),
+				   r->freq, r->qual,
 				   r->noise, noise_valid ? "" : "~", r->level,
 				   r->snr, r->snr >= GREAT_SNR ? "*" : "",
 				   r->flags,
 				   r->age, r->est_throughput);
 		} else {
-			wpa_printf(MSG_EXCESSIVE, MACSTR " freq=%d qual=%d "
-				   "noise=%d level=%d flags=0x%x age=%u est=%u",
-				   MAC2STR(r->bssid), r->freq, r->qual,
+			wpa_printf(MSG_EXCESSIVE, MACSTR
+				   " ssid=%s freq=%d qual=%d noise=%d level=%d flags=0x%x age=%u est=%u",
+				   MAC2STR(r->bssid),
+				   wpa_ssid_txt(ssid, ssid_len),
+				   r->freq, r->qual,
 				   r->noise, r->level, r->flags, r->age,
 				   r->est_throughput);
 		}
@@ -2902,6 +2969,7 @@ wpa_scan_clone_params(const struct wpa_driver_scan_params *src)
 	params->relative_adjust_band = src->relative_adjust_band;
 	params->relative_adjust_rssi = src->relative_adjust_rssi;
 	params->p2p_include_6ghz = src->p2p_include_6ghz;
+	params->non_coloc_6ghz = src->non_coloc_6ghz;
 	return params;
 
 failed:
