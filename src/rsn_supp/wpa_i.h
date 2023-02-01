@@ -185,6 +185,7 @@ struct wpa_sm {
 	unsigned int oci_freq_override_eapol_g2;
 	unsigned int oci_freq_override_ft_assoc;
 	unsigned int oci_freq_override_fils_assoc;
+	unsigned int disable_eapol_g2_tx;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 #ifdef CONFIG_FILS
@@ -398,6 +399,9 @@ wpa_sm_tdls_peer_addset(struct wpa_sm *sm, const u8 *addr, int add,
 			size_t supp_rates_len,
 			const struct ieee80211_ht_capabilities *ht_capab,
 			const struct ieee80211_vht_capabilities *vht_capab,
+			const struct ieee80211_he_capabilities *he_capab,
+			size_t he_capab_len,
+			const struct ieee80211_he_6ghz_band_cap *he_6ghz_capab,
 			u8 qosinfo, int wmm, const u8 *ext_capab,
 			size_t ext_capab_len, const u8 *supp_channels,
 			size_t supp_channels_len, const u8 *supp_oper_classes,
@@ -407,7 +411,9 @@ wpa_sm_tdls_peer_addset(struct wpa_sm *sm, const u8 *addr, int add,
 		return sm->ctx->tdls_peer_addset(sm->ctx->ctx, addr, add,
 						 aid, capability, supp_rates,
 						 supp_rates_len, ht_capab,
-						 vht_capab, qosinfo, wmm,
+						 vht_capab,
+						 he_capab, he_capab_len,
+						 he_6ghz_capab, qosinfo, wmm,
 						 ext_capab, ext_capab_len,
 						 supp_channels,
 						 supp_channels_len,

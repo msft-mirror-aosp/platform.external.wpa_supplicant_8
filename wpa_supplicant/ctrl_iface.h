@@ -122,6 +122,8 @@ void wpa_supplicant_global_ctrl_iface_deinit(
 
 void wpas_ctrl_radio_work_flush(struct wpa_supplicant *wpa_s);
 
+int wpas_ctrl_cmd_debug_level(const char *cmd);
+
 #else /* CONFIG_CTRL_IFACE */
 
 static inline struct ctrl_iface_priv *
@@ -131,7 +133,8 @@ wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 }
 
 static inline void
-wpa_supplicant_ctrl_iface_deinit(struct ctrl_iface_priv *priv)
+wpa_supplicant_ctrl_iface_deinit(struct wpa_supplicant *wpa_s,
+				 struct ctrl_iface_priv *priv)
 {
 }
 

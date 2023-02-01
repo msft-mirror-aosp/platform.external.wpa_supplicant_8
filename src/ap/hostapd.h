@@ -14,6 +14,7 @@
 #endif /* CONFIG_SQLITE */
 
 #include "common/defs.h"
+#include "common/dpp.h"
 #include "utils/list.h"
 #include "ap_config.h"
 #include "drivers/driver.h"
@@ -138,6 +139,8 @@ struct hostapd_neighbor_entry {
 	/* LCI update time */
 	struct os_time lci_date;
 	int stationary;
+	u32 short_ssid;
+	u8 bss_parameters;
 };
 
 struct hostapd_sae_commit_queue {
@@ -205,6 +208,7 @@ struct hostapd_data {
 
 	void *ssl_ctx;
 	void *eap_sim_db_priv;
+	struct crypto_rsa_key *imsi_privacy_key;
 	struct radius_server_data *radius_srv;
 	struct dl_list erp_keys; /* struct eap_server_erp_key */
 
@@ -292,6 +296,17 @@ struct hostapd_data {
 	unsigned int cs_c_off_ecsa_beacon;
 	unsigned int cs_c_off_ecsa_proberesp;
 
+#ifdef CONFIG_IEEE80211AX
+	bool cca_in_progress;
+	u8 cca_count;
+	u8 cca_color;
+	unsigned int cca_c_off_beacon;
+	unsigned int cca_c_off_proberesp;
+	struct os_reltime first_color_collision;
+	struct os_reltime last_color_collision;
+	u64 color_collision_bitmap;
+#endif /* CONFIG_IEEE80211AX */
+
 #ifdef CONFIG_P2P
 	struct p2p_data *p2p;
 	struct p2p_group *p2p_group;
@@ -326,10 +341,10 @@ struct hostapd_data {
 
 #ifdef CONFIG_SAE
 	/** Key used for generating SAE anti-clogging tokens */
-	u8 sae_token_key[8];
-	struct os_reltime last_sae_token_key_update;
-	u16 sae_token_idx;
-	u16 sae_pending_token_idx[256];
+	u8 comeback_key[8];
+	struct os_reltime last_comeback_key_update;
+	u16 comeback_idx;
+	u16 comeback_pending_idx[256];
 	int dot11RSNASAERetransPeriod; /* msec */
 	struct dl_list sae_commit_queue; /* struct hostapd_sae_commit_queue */
 #endif /* CONFIG_SAE */
@@ -354,6 +369,8 @@ struct hostapd_data {
 	int last_bigtk_key_idx;
 	u8 last_bigtk[WPA_BIGTK_MAX_LEN];
 	size_t last_bigtk_len;
+
+	bool force_backlog_bytes;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 #ifdef CONFIG_MBO
@@ -384,6 +401,7 @@ struct hostapd_data {
 	struct dpp_bootstrap_info *dpp_pkex_bi;
 	char *dpp_pkex_code;
 	char *dpp_pkex_identifier;
+	enum dpp_pkex_ver dpp_pkex_ver;
 	char *dpp_pkex_auth_cmd;
 	char *dpp_configurator_params;
 	struct os_reltime dpp_last_init;
@@ -517,6 +535,21 @@ struct hostapd_iface {
 	int *basic_rates;
 	int freq;
 
+	/* Background radar configuration */
+	struct {
+		int channel;
+		int secondary_channel;
+		int freq;
+		int centr_freq_seg0_idx;
+		int centr_freq_seg1_idx;
+		/* Main chain is on temporary channel during
+		 * CAC detection on radar offchain.
+		 */
+		unsigned int temp_ch:1;
+		/* CAC started on radar offchain */
+		unsigned int cac_started:1;
+	} radar_background;
+
 	u16 hw_flags;
 
 	/* Number of associated Non-ERP stations (i.e., stations using 802.11b
@@ -644,6 +677,9 @@ void hostapd_periodic_iface(struct hostapd_iface *iface);
 int hostapd_owe_trans_get_info(struct hostapd_data *hapd);
 void hostapd_ocv_check_csa_sa_query(void *eloop_ctx, void *timeout_ctx);
 
+void hostapd_switch_color(struct hostapd_data *hapd, u64 bitmap);
+void hostapd_cleanup_cca_params(struct hostapd_data *hapd);
+
 /* utils.c */
 int hostapd_register_probereq_cb(struct hostapd_data *hapd,
 				 int (*cb)(void *ctx, const u8 *sa,
@@ -688,5 +724,7 @@ void hostapd_event_sta_opmode_changed(struct hostapd_data *hapd, const u8 *addr,
 void fst_hostapd_fill_iface_obj(struct hostapd_data *hapd,
 				struct fst_wpa_obj *iface_obj);
 #endif /* CONFIG_FST */
+
+int hostapd_set_acl(struct hostapd_data *hapd);
 
 #endif /* HOSTAPD_H */

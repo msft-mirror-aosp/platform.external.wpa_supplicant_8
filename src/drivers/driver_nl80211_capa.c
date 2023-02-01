@@ -16,10 +16,8 @@
 #include "common/wpa_common.h"
 #include "common/qca-vendor.h"
 #include "common/qca-vendor-attr.h"
-#include "driver_nl80211.h"
-#ifdef CONFIG_DRIVER_NL80211_BRCM
 #include "common/brcm_vendor.h"
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#include "driver_nl80211.h"
 
 static int protocol_feature_handler(struct nl_msg *msg, void *arg)
 {
@@ -666,6 +664,10 @@ static void wiphy_info_ext_feature_flags(struct wiphy_info_data *info,
 	if (ext_feature_isset(ext_features, len,
 			      NL80211_EXT_FEATURE_OPERATING_CHANNEL_VALIDATION))
 		capa->flags2 |= WPA_DRIVER_FLAGS2_OCV;
+
+	if (ext_feature_isset(ext_features, len,
+			      NL80211_EXT_FEATURE_RADAR_BACKGROUND))
+		capa->flags2 |= WPA_DRIVER_RADAR_BACKGROUND;
 }
 
 
@@ -892,7 +894,7 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 
 	if (tb[NL80211_ATTR_MAC_ACL_MAX])
 		capa->max_acl_mac_addrs =
-			nla_get_u8(tb[NL80211_ATTR_MAC_ACL_MAX]);
+			nla_get_u32(tb[NL80211_ATTR_MAC_ACL_MAX]);
 
 	wiphy_info_supported_iftypes(info, tb[NL80211_ATTR_SUPPORTED_IFTYPES]);
 	wiphy_info_iface_comb(info, tb[NL80211_ATTR_INTERFACE_COMBINATIONS]);
@@ -921,8 +923,15 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 	wiphy_info_tdls(capa, tb[NL80211_ATTR_TDLS_SUPPORT],
 			tb[NL80211_ATTR_TDLS_EXTERNAL_SETUP]);
 
-	if (tb[NL80211_ATTR_DEVICE_AP_SME])
+	if (tb[NL80211_ATTR_DEVICE_AP_SME]) {
+		u32 ap_sme_features_flags =
+			nla_get_u32(tb[NL80211_ATTR_DEVICE_AP_SME]);
+
+		if (ap_sme_features_flags & NL80211_AP_SME_SA_QUERY_OFFLOAD)
+			capa->flags2 |= WPA_DRIVER_FLAGS2_SA_QUERY_OFFLOAD_AP;
+
 		info->device_ap_sme = 1;
+	}
 
 	wiphy_info_feature_flags(info, tb[NL80211_ATTR_FEATURE_FLAGS]);
 	wiphy_info_ext_feature_flags(info, tb[NL80211_ATTR_EXT_FEATURES]);
@@ -997,6 +1006,7 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 				case QCA_NL80211_VENDOR_SUBCMD_DO_ACS:
 					drv->capa.flags |=
 						WPA_DRIVER_FLAGS_ACS_OFFLOAD;
+					drv->qca_do_acs = 1;
 					break;
 				case QCA_NL80211_VENDOR_SUBCMD_SETBAND:
 					drv->setband_vendor_cmd_avail = 1;
@@ -1021,25 +1031,26 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 					break;
 #endif /* CONFIG_DRIVER_NL80211_QCA */
 				}
-			}
-#ifdef CONFIG_DRIVER_NL80211_BRCM
-			if (vinfo->vendor_id == OUI_BRCM) {
-				wpa_printf(MSG_MSGDUMP, "vendor:%x cmd:0x%x\n",
-						vinfo->vendor_id, vinfo->subcmd);
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
+			} else if (vinfo->vendor_id == OUI_BRCM) {
 				switch (vinfo->subcmd) {
-					case BRCM_VENDOR_SCMD_ACS:
-						drv->capa.flags |= WPA_DRIVER_FLAGS_ACS_OFFLOAD;
-						drv->capa.flags |=
-							WPA_DRIVER_FLAGS_SUPPORT_HW_MODE_ANY;
-						break;
-					case BRCM_VENDOR_SUBCMD_SET_PMK:
-						drv->vendor_set_pmk = 1;
-						break;
-					default:
-						break;
+				case BRCM_VENDOR_SCMD_ACS:
+					drv->capa.flags |=
+						WPA_DRIVER_FLAGS_ACS_OFFLOAD;
+				    drv->capa.flags |=
+						WPA_DRIVER_FLAGS_SUPPORT_HW_MODE_ANY;
+					wpa_printf(MSG_DEBUG,
+						   "Enabled BRCM ACS");
+					drv->brcm_do_acs = 1;
+					break;
+				case BRCM_VENDOR_SCMD_SET_PMK:
+					drv->vendor_set_pmk = 1;
+					break;
+				default:
+					break;
 				}
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
 			}
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
 			wpa_printf(MSG_DEBUG, "nl80211: Supported vendor command: vendor_id=0x%x subcmd=%u",
 				   vinfo->vendor_id, vinfo->subcmd);
 		}
@@ -1335,7 +1346,7 @@ int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 	drv->has_capability = 1;
 	drv->has_driver_key_mgmt = info.has_key_mgmt | info.has_key_mgmt_iftype;
 
-	/* Fallback to hardcoded defaults if the driver does nott advertize any
+	/* Fallback to hardcoded defaults if the driver does not advertise any
 	 * AKM capabilities. */
 	if (!drv->has_driver_key_mgmt) {
 		drv->capa.key_mgmt = WPA_DRIVER_CAPA_KEY_MGMT_WPA |
@@ -1394,7 +1405,7 @@ int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 		WPA_DRIVER_AUTH_SHARED |
 		WPA_DRIVER_AUTH_LEAP;
 
-	drv->capa.flags |= WPA_DRIVER_FLAGS_SANE_ERROR_CODES;
+	drv->capa.flags |= WPA_DRIVER_FLAGS_VALID_ERROR_CODES;
 	drv->capa.flags |= WPA_DRIVER_FLAGS_SET_KEYS_AFTER_ASSOC_DONE;
 	drv->capa.flags |= WPA_DRIVER_FLAGS_EAPOL_TX_STATUS;
 
@@ -1772,12 +1783,14 @@ static int phy_info_rates(struct hostapd_hw_modes *mode, struct nlattr *tb)
 }
 
 
-static void phy_info_iftype_copy(struct he_capabilities *he_capab,
+static void phy_info_iftype_copy(struct hostapd_hw_modes *mode,
 				 enum ieee80211_op_mode opmode,
 				 struct nlattr **tb, struct nlattr **tb_flags)
 {
 	enum nl80211_iftype iftype;
 	size_t len;
+	struct he_capabilities *he_capab = &mode->he_capab[opmode];
+	struct eht_capabilities *eht_capab = &mode->eht_capab[opmode];
 
 	switch (opmode) {
 	case IEEE80211_MODE_INFRA:
@@ -1847,6 +1860,47 @@ static void phy_info_iftype_copy(struct he_capabilities *he_capab,
 		capa = nla_get_u16(tb[NL80211_BAND_IFTYPE_ATTR_HE_6GHZ_CAPA]);
 		he_capab->he_6ghz_capa = le_to_host16(capa);
 	}
+
+	if (!tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MAC] ||
+	    !tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PHY])
+		return;
+
+	eht_capab->eht_supported = true;
+
+	if (tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MAC] &&
+	    nla_len(tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MAC]) >= 2) {
+		    const u8 *pos;
+
+		    pos = nla_data(tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MAC]);
+		    eht_capab->mac_cap = WPA_GET_LE16(pos);
+	}
+
+	if (tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PHY]) {
+		len = nla_len(tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PHY]);
+		if (len > sizeof(eht_capab->phy_cap))
+			len = sizeof(eht_capab->phy_cap);
+		os_memcpy(eht_capab->phy_cap,
+			  nla_data(tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PHY]),
+			  len);
+	}
+
+	if (tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MCS_SET]) {
+		len = nla_len(tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MCS_SET]);
+		if (len > sizeof(eht_capab->mcs))
+			len = sizeof(eht_capab->mcs);
+		os_memcpy(eht_capab->mcs,
+			  nla_data(tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MCS_SET]),
+			  len);
+	}
+
+	if (tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PPE]) {
+		len = nla_len(tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PPE]);
+		if (len > sizeof(eht_capab->ppet))
+			len = sizeof(eht_capab->ppet);
+		os_memcpy(&eht_capab->ppet,
+			  nla_data(tb[NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PPE]),
+			  len);
+	}
 }
 
 
@@ -1868,7 +1922,7 @@ static int phy_info_iftype(struct hostapd_hw_modes *mode,
 		return NL_STOP;
 
 	for (i = 0; i < IEEE80211_MODE_NUM; i++)
-		phy_info_iftype_copy(&mode->he_capab[i], i, tb, tb_flags);
+		phy_info_iftype_copy(mode, i, tb, tb_flags);
 
 	return NL_OK;
 }
@@ -2430,7 +2484,7 @@ static void nl80211_dump_chan_list(struct hostapd_hw_modes *modes,
 
 	for (i = 0; i < num_modes; i++) {
 		struct hostapd_hw_modes *mode = &modes[i];
-		char str[200];
+		char str[1000];
 		char *pos = str;
 		char *end = pos + sizeof(str);
 		int j, res;

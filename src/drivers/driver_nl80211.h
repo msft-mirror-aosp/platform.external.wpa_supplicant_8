@@ -32,6 +32,7 @@ struct nl80211_global {
 	struct nl_cb *nl_cb;
 	struct nl_sock *nl;
 	int nl80211_id;
+	int nlctrl_id;
 	int ioctl_sock; /* socket for ioctl() use */
 	struct nl_sock *nl_event;
 	u8 p2p_perm_addr[ETH_ALEN];
@@ -149,7 +150,7 @@ struct wpa_driver_nl80211_data {
 	unsigned int ignore_next_local_disconnect:1;
 	unsigned int ignore_next_local_deauth:1;
 	unsigned int hostapd:1;
-	unsigned int start_mode_ap:1;
+	unsigned int start_mode_sta:1;
 	unsigned int start_iface_up:1;
 	unsigned int test_use_roc_tx:1;
 	unsigned int ignore_deauth_event:1;
@@ -177,6 +178,8 @@ struct wpa_driver_nl80211_data {
 	unsigned int get_sta_info_vendor_cmd_avail:1;
 	unsigned int fils_discovery:1;
 	unsigned int unsol_bcast_probe_resp:1;
+	unsigned int qca_do_acs:1;
+	unsigned int brcm_do_acs:1;
 
 	u64 vendor_scan_cookie;
 	u64 remain_on_chan_cookie;
@@ -225,9 +228,9 @@ struct wpa_driver_nl80211_data {
 	 * (NL80211_CMD_VENDOR). 0 if no pending scan request.
 	 */
 	int last_scan_cmd;
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 	unsigned int vendor_set_pmk:1; /* for legacy set_pmk method before NL80211_CMD_SET_PMK */
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
 #ifdef CONFIG_DRIVER_NL80211_QCA
 	bool roam_indication_done;
 	u8 *pending_roam_data;
@@ -275,7 +278,7 @@ int wpa_driver_nl80211_set_mode(struct i802_bss *bss,
 int wpa_driver_nl80211_mlme(struct wpa_driver_nl80211_data *drv,
 			    const u8 *addr, int cmd, u16 reason_code,
 			    int local_state_change,
-			    struct nl_sock *nl_connect);
+			    struct i802_bss *bss);
 
 int nl80211_create_monitor_interface(struct wpa_driver_nl80211_data *drv);
 void nl80211_remove_monitor_interface(struct wpa_driver_nl80211_data *drv);

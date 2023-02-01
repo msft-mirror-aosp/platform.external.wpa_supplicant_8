@@ -452,6 +452,10 @@ static int wpa_supplicant_get_pmk(struct wpa_sm *sm,
 		buf = wpa_sm_alloc_eapol(sm, IEEE802_1X_TYPE_EAPOL_START,
 					 NULL, 0, &buflen, NULL);
 		if (buf) {
+			/* Set and reset eapFail to allow EAP state machine to
+			 * proceed with new authentication. */
+			eapol_sm_notify_eap_fail(sm->eapol, true);
+			eapol_sm_notify_eap_fail(sm->eapol, false);
 			wpa_sm_ether_send(sm, sm->bssid, ETH_P_EAPOL,
 					  buf, buflen);
 			os_free(buf);
@@ -606,8 +610,8 @@ static int wpa_derive_ptk(struct wpa_sm *sm, const unsigned char *src_addr,
 #endif /* CONFIG_OWE */
 
 	if (sm->force_kdk_derivation ||
-	    (sm->secure_ltf && sm->ap_rsnxe && sm->ap_rsnxe_len >= 4 &&
-	     sm->ap_rsnxe[3] & BIT(WLAN_RSNX_CAPAB_SECURE_LTF - 8)))
+	    (sm->secure_ltf &&
+	     ieee802_11_rsnx_capab(sm->ap_rsnxe, WLAN_RSNX_CAPAB_SECURE_LTF)))
 		kdk_len = WPA_KDK_MAX_LEN;
 	else
 		kdk_len = 0;
@@ -2020,6 +2024,13 @@ static int wpa_supplicant_send_2_of_2(struct wpa_sm *sm,
 	u8 *rbuf, *key_mic;
 	size_t kde_len = 0;
 
+#ifdef CONFIG_TESTING_OPTIONS
+	if (sm->disable_eapol_g2_tx) {
+		wpa_printf(MSG_INFO, "TEST: Disable sending EAPOL-Key 2/2");
+		return 0;
+	}
+#endif /* CONFIG_TESTING_OPTIONS */
+
 #ifdef CONFIG_OCV
 	if (wpa_sm_ocv_enabled(sm))
 		kde_len = OCV_OCI_KDE_LEN;
@@ -2337,6 +2348,16 @@ void wpa_sm_aborted_cached(struct wpa_sm *sm)
 	if (sm && sm->cur_pmksa) {
 		wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
 			"RSN: Cancelling PMKSA caching attempt");
+		sm->cur_pmksa = NULL;
+	}
+}
+
+
+void wpa_sm_aborted_external_cached(struct wpa_sm *sm)
+{
+	if (sm && sm->cur_pmksa && sm->cur_pmksa->external) {
+		wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
+			"RSN: Cancelling external PMKSA caching attempt");
 		sm->cur_pmksa = NULL;
 	}
 }
@@ -2890,6 +2911,15 @@ static void wpa_sm_pmksa_free_cb(struct rsn_pmksa_cache_entry *entry,
 }
 
 
+static bool wpa_sm_pmksa_is_current_cb(struct rsn_pmksa_cache_entry *entry,
+				       void *ctx)
+{
+	struct wpa_sm *sm = ctx;
+
+	return sm->cur_pmksa == entry;
+}
+
+
 /**
  * wpa_sm_init - Initialize WPA state machine
  * @ctx: Context pointer for callbacks; this needs to be an allocated buffer
@@ -2913,7 +2943,8 @@ struct wpa_sm * wpa_sm_init(struct wpa_sm_ctx *ctx)
 	sm->dot11RSNAConfigPMKReauthThreshold = 70;
 	sm->dot11RSNAConfigSATimeout = 60;
 
-	sm->pmksa = pmksa_cache_init(wpa_sm_pmksa_free_cb, sm, sm);
+	sm->pmksa = pmksa_cache_init(wpa_sm_pmksa_free_cb,
+				     wpa_sm_pmksa_is_current_cb, sm, sm);
 	if (sm->pmksa == NULL) {
 		wpa_msg(sm->ctx->msg_ctx, MSG_ERROR,
 			"RSN: PMKSA cache initialization failed");
@@ -3109,9 +3140,11 @@ void wpa_sm_set_pmk(struct wpa_sm *sm, const u8 *pmk, size_t pmk_len,
 #endif /* CONFIG_IEEE80211R */
 
 	if (bssid) {
-		pmksa_cache_add(sm->pmksa, pmk, pmk_len, pmkid, NULL, 0,
-				bssid, sm->own_addr,
-				sm->network_ctx, sm->key_mgmt, NULL);
+		sm->cur_pmksa = pmksa_cache_add(sm->pmksa, pmk, pmk_len,
+						pmkid, NULL, 0, bssid,
+						sm->own_addr,
+						sm->network_ctx, sm->key_mgmt,
+						NULL);
 	}
 }
 
@@ -3354,6 +3387,9 @@ int wpa_sm_set_param(struct wpa_sm *sm, enum wpa_sm_conf_params param,
 		break;
 	case WPA_PARAM_OCI_FREQ_FILS_ASSOC:
 		sm->oci_freq_override_fils_assoc = value;
+		break;
+	case WPA_PARAM_DISABLE_EAPOL_G2_TX:
+		sm->disable_eapol_g2_tx = value;
 		break;
 #endif /* CONFIG_TESTING_OPTIONS */
 #ifdef CONFIG_DPP2
@@ -3862,10 +3898,16 @@ void wpa_sm_update_replay_ctr(struct wpa_sm *sm, const u8 *replay_ctr)
 
 void wpa_sm_pmksa_cache_flush(struct wpa_sm *sm, void *network_ctx)
 {
-	pmksa_cache_flush(sm->pmksa, network_ctx, NULL, 0);
+	pmksa_cache_flush(sm->pmksa, network_ctx, NULL, 0, false);
 }
 
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+
+void wpa_sm_external_pmksa_cache_flush(struct wpa_sm *sm, void *network_ctx)
+{
+	pmksa_cache_flush(sm->pmksa, network_ctx, NULL, 0, true);
+}
+
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 void wpa_sm_install_pmk(struct wpa_sm *sm)
 {
 	/* In case the driver wants to handle re-assocs, pass it down the PMK. */
@@ -3904,7 +3946,8 @@ void wpa_sm_notify_brcm_ft_reassoc(struct wpa_sm *sm, const u8 *bssid)
 			"WPA: Updated KCK and KEK after FT reassoc");
 	}
 }
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
+
 
 #ifdef CONFIG_WNM
 int wpa_wnmsleep_install_key(struct wpa_sm *sm, u8 subelem_id, u8 *buf)
@@ -4413,8 +4456,8 @@ int fils_process_auth(struct wpa_sm *sm, const u8 *bssid, const u8 *data,
 	}
 
 	if (sm->force_kdk_derivation ||
-	    (sm->secure_ltf && sm->ap_rsnxe && sm->ap_rsnxe_len >= 4 &&
-	     sm->ap_rsnxe[3] & BIT(WLAN_RSNX_CAPAB_SECURE_LTF - 8)))
+	    (sm->secure_ltf &&
+	     ieee802_11_rsnx_capab(sm->ap_rsnxe, WLAN_RSNX_CAPAB_SECURE_LTF)))
 		kdk_len = WPA_KDK_MAX_LEN;
 	else
 		kdk_len = 0;
@@ -5267,3 +5310,10 @@ void wpa_pasn_pmksa_cache_add(struct wpa_sm *sm, const u8 *pmk, size_t pmk_len,
 					key_mgmt, 0);
 }
 #endif /* CONFIG_PASN */
+
+
+void wpa_sm_pmksa_cache_reconfig(struct wpa_sm *sm)
+{
+	if (sm)
+		pmksa_cache_reconfig(sm->pmksa);
+}

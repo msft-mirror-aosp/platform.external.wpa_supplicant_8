@@ -1599,6 +1599,13 @@ int wpa_parse_wpa_ie_rsn(const u8 *rsn_ie, size_t rsn_ie_len,
 				   "%s: invalid group cipher 0x%x (%08x)",
 				   __func__, data->group_cipher,
 				   WPA_GET_BE32(pos));
+#ifdef CONFIG_NO_TKIP
+			if (RSN_SELECTOR_GET(pos) == RSN_CIPHER_SUITE_TKIP) {
+				wpa_printf(MSG_DEBUG,
+					   "%s: TKIP as group cipher not supported in CONFIG_NO_TKIP=y build",
+					   __func__);
+			}
+#endif /* CONFIG_NO_TKIP */
 			return -1;
 		}
 		pos += RSN_SELECTOR_LEN;
@@ -3226,6 +3233,16 @@ int wpa_parse_kde_ies(const u8 *buf, size_t len, struct wpa_eapol_ie_parse *ie)
 			   pos[1] >= sizeof(struct ieee80211_vht_capabilities))
 		{
 			ie->vht_capabilities = pos + 2;
+		} else if (*pos == WLAN_EID_EXTENSION &&
+			   pos[1] >= 1 + IEEE80211_HE_CAPAB_MIN_LEN &&
+			   pos[2] == WLAN_EID_EXT_HE_CAPABILITIES) {
+			ie->he_capabilities = pos + 3;
+			ie->he_capab_len = pos[1] - 1;
+		} else if (*pos == WLAN_EID_EXTENSION &&
+			   pos[1] >= 1 +
+			   sizeof(struct ieee80211_he_6ghz_band_cap) &&
+			   pos[2] == WLAN_EID_EXT_HE_6GHZ_BAND_CAP) {
+			ie->he_6ghz_capabilities = pos + 3;
 		} else if (*pos == WLAN_EID_QOS && pos[1] >= 1) {
 			ie->qosinfo = pos[2];
 		} else if (*pos == WLAN_EID_SUPPORTED_CHANNELS) {
@@ -3414,14 +3431,17 @@ int wpa_pasn_add_rsne(struct wpabuf *buf, const u8 *pmkid, int akmp, int cipher)
  * @pasn_group: Finite Cyclic Group ID for PASN authentication
  * @wrapped_data_format: Format of the data in the Wrapped Data IE
  * @pubkey: A buffer holding the local public key. Can be NULL
+ * @compressed: In case pubkey is included, indicates if the public key is
+ *     compressed (only x coordinate is included) or not (both x and y
+ *     coordinates are included)
  * @comeback: A buffer holding the comeback token. Can be NULL
  * @after: If comeback is set, defined the comeback time in seconds. -1 to not
  *	include the Comeback After field (frames from non-AP STA).
  */
 void wpa_pasn_add_parameter_ie(struct wpabuf *buf, u16 pasn_group,
 			       u8 wrapped_data_format,
-			       struct wpabuf *pubkey,
-			       struct wpabuf *comeback, int after)
+			       const struct wpabuf *pubkey, bool compressed,
+			       const struct wpabuf *comeback, int after)
 {
 	struct pasn_parameter_ie *params;
 
@@ -3460,13 +3480,22 @@ void wpa_pasn_add_parameter_ie(struct wpabuf *buf, u16 pasn_group,
 
 		/*
 		 * 2 octets for the finite cyclic group + 2 octets public key
-		 * length + the actual key
+		 * length + 1 octet for the compressed/uncompressed indication +
+		 * the actual key.
 		 */
-		params->len += 2 + 1 + wpabuf_len(pubkey);
+		params->len += 2 + 1 + 1 + wpabuf_len(pubkey);
 		params->control |= WPA_PASN_CTRL_GROUP_AND_KEY_PRESENT;
 
 		wpabuf_put_le16(buf, pasn_group);
-		wpabuf_put_u8(buf, wpabuf_len(pubkey));
+
+		/*
+		 * The first octet indicates whether the public key is
+		 * compressed, as defined in RFC 5480 section 2.2.
+		 */
+		wpabuf_put_u8(buf, wpabuf_len(pubkey) + 1);
+		wpabuf_put_u8(buf, compressed ? WPA_PASN_PUBKEY_COMPRESSED_0 :
+			      WPA_PASN_PUBKEY_UNCOMPRESSED);
+
 		wpabuf_put_buf(buf, pubkey);
 	}
 }

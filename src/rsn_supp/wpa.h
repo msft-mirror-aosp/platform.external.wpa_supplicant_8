@@ -69,6 +69,9 @@ struct wpa_sm_ctx {
 				size_t supp_rates_len,
 				const struct ieee80211_ht_capabilities *ht_capab,
 				const struct ieee80211_vht_capabilities *vht_capab,
+				const struct ieee80211_he_capabilities *he_capab,
+				size_t he_capab_len,
+				const struct ieee80211_he_6ghz_band_cap *he_6ghz_capab,
 				u8 qosinfo, int wmm, const u8 *ext_capab,
 				size_t ext_capab_len, const u8 *supp_channels,
 				size_t supp_channels_len,
@@ -115,6 +118,7 @@ enum wpa_sm_conf_params {
 	WPA_PARAM_OCI_FREQ_EAPOL_G2,
 	WPA_PARAM_OCI_FREQ_FT_ASSOC,
 	WPA_PARAM_OCI_FREQ_FILS_ASSOC,
+	WPA_PARAM_DISABLE_EAPOL_G2_TX,
 };
 
 struct rsn_supp_config {
@@ -178,6 +182,7 @@ int wpa_parse_wpa_ie(const u8 *wpa_ie, size_t wpa_ie_len,
 		     struct wpa_ie_data *data);
 
 void wpa_sm_aborted_cached(struct wpa_sm *sm);
+void wpa_sm_aborted_external_cached(struct wpa_sm *sm);
 int wpa_sm_rx_eapol(struct wpa_sm *sm, const u8 *src_addr,
 		    const u8 *buf, size_t len);
 int wpa_sm_parse_own_wpa_ie(struct wpa_sm *sm, struct wpa_ie_data *data);
@@ -203,19 +208,21 @@ int wpa_sm_has_ptk_installed(struct wpa_sm *sm);
 void wpa_sm_update_replay_ctr(struct wpa_sm *sm, const u8 *replay_ctr);
 
 void wpa_sm_pmksa_cache_flush(struct wpa_sm *sm, void *network_ctx);
+void wpa_sm_external_pmksa_cache_flush(struct wpa_sm *sm, void *network_ctx);
 
 int wpa_sm_get_p2p_ip_addr(struct wpa_sm *sm, u8 *buf);
 
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 void wpa_sm_install_pmk(struct wpa_sm *sm);
 void wpa_sm_notify_brcm_ft_reassoc(struct wpa_sm *sm, const u8 *bssid);
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
 
 void wpa_sm_set_rx_replay_ctr(struct wpa_sm *sm, const u8 *rx_replay_counter);
 void wpa_sm_set_ptk_kck_kek(struct wpa_sm *sm,
 			    const u8 *ptk_kck, size_t ptk_kck_len,
 			    const u8 *ptk_kek, size_t ptk_kek_len);
 int wpa_fils_is_completed(struct wpa_sm *sm);
+void wpa_sm_pmksa_cache_reconfig(struct wpa_sm *sm);
 
 #else /* CONFIG_NO_WPA */
 
@@ -356,6 +363,10 @@ static inline void wpa_sm_aborted_cached(struct wpa_sm *sm)
 {
 }
 
+static inline void wpa_sm_aborted_external_cached(struct wpa_sm *sm)
+{
+}
+
 static inline int wpa_sm_rx_eapol(struct wpa_sm *sm, const u8 *src_addr,
 				  const u8 *buf, size_t len)
 {
@@ -395,6 +406,11 @@ static inline void wpa_sm_update_replay_ctr(struct wpa_sm *sm,
 {
 }
 
+static inline void wpa_sm_external_pmksa_cache_flush(struct wpa_sm *sm,
+						     void *network_ctx)
+{
+}
+
 static inline void wpa_sm_pmksa_cache_flush(struct wpa_sm *sm,
 					    void *network_ctx)
 {
@@ -416,6 +432,10 @@ static inline int wpa_fils_is_completed(struct wpa_sm *sm)
 	return 0;
 }
 
+static inline void wpa_sm_pmksa_cache_reconfig(struct wpa_sm *sm)
+{
+}
+
 #endif /* CONFIG_NO_WPA */
 
 #ifdef CONFIG_IEEE80211R
@@ -435,9 +455,10 @@ int wpa_ft_validate_reassoc_resp(struct wpa_sm *sm, const u8 *ies,
 				 size_t ies_len, const u8 *src_addr);
 int wpa_ft_start_over_ds(struct wpa_sm *sm, const u8 *target_ap,
 			 const u8 *mdie);
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 int wpa_ft_is_ft_protocol(struct wpa_sm *sm);
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
+
 #ifdef CONFIG_PASN
 
 int wpa_pasn_ft_derive_pmk_r1(struct wpa_sm *sm, int akmp, const u8 *r1kh_id,
@@ -477,12 +498,12 @@ static inline int wpa_ft_is_completed(struct wpa_sm *sm)
 	return 0;
 }
 
-#ifdef CONFIG_DRIVER_NL80211_BRCM
+#if defined(CONFIG_DRIVER_NL80211_BRCM) || defined(CONFIG_DRIVER_NL80211_SYNA)
 static inline int wpa_ft_is_ft_protocol(struct wpa_sm *sm)
 {
 	return 0;
 }
-#endif /* CONFIG_DRIVER_NL80211_BRCM */
+#endif /* CONFIG_DRIVER_NL80211_BRCM || CONFIG_DRIVER_NL80211_SYNA */
 
 static inline void wpa_reset_ft_completed(struct wpa_sm *sm)
 {

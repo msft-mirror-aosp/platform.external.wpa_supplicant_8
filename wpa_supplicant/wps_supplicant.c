@@ -356,8 +356,6 @@ static void wpas_wps_remove_dup_network(struct wpa_supplicant *wpa_s,
 		/* Remove the duplicated older network entry. */
 		wpa_printf(MSG_DEBUG, "Remove duplicate network %d", ssid->id);
 		wpas_notify_network_removed(wpa_s, ssid);
-		if (wpa_s->current_ssid == ssid)
-			wpa_s->current_ssid = NULL;
 		wpa_config_remove_network(wpa_s->conf, ssid->id);
 	}
 }
@@ -372,6 +370,7 @@ static int wpa_supplicant_wps_cred(void *ctx,
 #ifdef CONFIG_WPS_REG_DISABLE_OPEN
 	int registrar = 0;
 #endif /* CONFIG_WPS_REG_DISABLE_OPEN */
+	bool add_sae;
 
 	if ((wpa_s->conf->wps_cred_processing == 1 ||
 	     wpa_s->conf->wps_cred_processing == 2) && cred->cred_attr) {
@@ -534,8 +533,12 @@ static int wpa_supplicant_wps_cred(void *ctx,
 	case WPS_AUTH_WPA2PSK:
 		ssid->auth_alg = WPA_AUTH_ALG_OPEN;
 		ssid->key_mgmt = WPA_KEY_MGMT_PSK;
-		if (wpa_s->conf->wps_cred_add_sae &&
-		    cred->key_len != 2 * PMK_LEN) {
+		add_sae = wpa_s->conf->wps_cred_add_sae;
+#ifdef CONFIG_P2P
+		if (ssid->p2p_group && is_p2p_6ghz_capable(wpa_s->global->p2p))
+			add_sae = true;
+#endif /* CONFIG_P2P */
+		if (add_sae && cred->key_len != 2 * PMK_LEN) {
 			ssid->auth_alg = 0;
 			ssid->key_mgmt |= WPA_KEY_MGMT_SAE;
 			ssid->ieee80211w = MGMT_FRAME_PROTECTION_OPTIONAL;
