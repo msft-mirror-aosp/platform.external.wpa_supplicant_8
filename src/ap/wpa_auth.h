@@ -1,6 +1,6 @@
 /*
  * hostapd - IEEE 802.11i-2004 / WPA Authenticator
- * Copyright (c) 2004-2017, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2022, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -275,6 +275,8 @@ struct wpa_auth_config {
 	 * PTK derivation regardless of advertised capabilities.
 	 */
 	bool force_kdk_derivation;
+
+	bool radius_psk;
 };
 
 typedef enum {
@@ -322,6 +324,9 @@ struct wpa_auth_callbacks {
 	void (*store_ptksa)(void *ctx, const u8 *addr, int cipher,
 			    u32 life_time, const struct wpa_ptk *ptk);
 	void (*clear_ptksa)(void *ctx, const u8 *addr, int cipher);
+	void (*request_radius_psk)(void *ctx, const u8 *addr, int key_mgmt,
+				   const u8 *anonce,
+				   const u8 *eapol, size_t eapol_len);
 #ifdef CONFIG_IEEE80211R_AP
 	struct wpa_state_machine * (*add_sta)(void *ctx, const u8 *sta_addr);
 	int (*add_sta_ft)(void *ctx, const u8 *sta_addr);
@@ -555,7 +560,12 @@ int wpa_auth_resend_m3(struct wpa_state_machine *sm,
 int wpa_auth_resend_group_m1(struct wpa_state_machine *sm,
 			     void (*cb)(void *ctx1, void *ctx2),
 			     void *ctx1, void *ctx2);
+int wpa_auth_rekey_ptk(struct wpa_authenticator *wpa_auth,
+		       struct wpa_state_machine *sm);
 int wpa_auth_rekey_gtk(struct wpa_authenticator *wpa_auth);
+int hostapd_wpa_auth_send_eapol(void *ctx, const u8 *addr,
+				const u8 *data, size_t data_len,
+				int encrypt);
 void wpa_auth_set_ptk_rekey_timer(struct wpa_state_machine *sm);
 void wpa_auth_set_ft_rsnxe_used(struct wpa_authenticator *wpa_auth, int val);
 
@@ -572,5 +582,7 @@ void wpa_auth_set_skip_send_eapol(struct wpa_authenticator *wpa_auth,
 				     u8 val);
 void wpa_auth_set_enable_eapol_large_timeout(struct wpa_authenticator *wpa_auth,
 				     u8 val);
+
+void wpa_auth_sta_radius_psk_resp(struct wpa_state_machine *sm, bool success);
 
 #endif /* WPA_AUTH_H */

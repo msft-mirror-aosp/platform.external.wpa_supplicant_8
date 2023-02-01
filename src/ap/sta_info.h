@@ -42,6 +42,7 @@
 #define WLAN_STA_HE BIT(24)
 #define WLAN_STA_6GHZ BIT(25)
 #define WLAN_STA_PENDING_PASN_FILS_ERP BIT(26)
+#define WLAN_STA_EHT BIT(27)
 #define WLAN_STA_PENDING_DISASSOC_CB BIT(29)
 #define WLAN_STA_PENDING_DEAUTH_CB BIT(30)
 #define WLAN_STA_NONERP BIT(31)
@@ -88,6 +89,7 @@ struct pasn_data {
 	u16 group;
 	u8 trans_seq;
 	u8 wrapped_data_format;
+	size_t kdk_len;
 
 	u8 hash[SHA384_MAC_LEN];
 	struct wpa_ptk ptk;
@@ -212,6 +214,8 @@ struct sta_info {
 	struct ieee80211_he_capabilities *he_capab;
 	size_t he_capab_len;
 	struct ieee80211_he_6ghz_band_cap *he_6ghz_capab;
+	struct ieee80211_eht_capabilities *eht_capab;
+	size_t eht_capab_len;
 
 	int sa_query_count; /* number of pending SA Query requests;
 			     * 0 = no SA Query in progress */
