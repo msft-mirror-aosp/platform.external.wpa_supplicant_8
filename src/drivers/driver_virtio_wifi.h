@@ -6,8 +6,8 @@
 #ifndef DRIVER_VIRTIO_WIFI_H
 #define DRIVER_VIRTIO_WIFI_H
 
-extern void set_virtio_sock(int sock);
-extern void set_virtio_ctrl_sock(int sock);
+extern int set_virtio_sock(int sock);
+extern int set_virtio_ctrl_sock(int sock);
 
 #define MAX_KEY_MATERIAL_LEN 32 /* max key length is 32 bytes */
 
