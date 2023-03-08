@@ -472,7 +472,7 @@ int AidlManager::registerInterface(struct wpa_supplicant *wpa_s)
 		// Enable randomized source MAC address for GAS/ANQP
 		// Set the lifetime to 0, guarantees a unique address for each GAS
 		// session
-		wpa_s->conf->gas_rand_mac_addr = 1;
+		wpa_s->conf->gas_rand_mac_addr = WPAS_MAC_ADDR_STYLE_RANDOM;
 		wpa_s->conf->gas_rand_addr_lifetime = 0;
 	}
 
@@ -1353,7 +1353,7 @@ void AidlManager::notifyP2pGroupFormationFailure(
 
 void AidlManager::notifyP2pGroupStarted(
 	struct wpa_supplicant *wpa_group_s, const struct wpa_ssid *ssid,
-	int persistent, int client)
+	int persistent, int client, const u8 *ip)
 {
 	if (!wpa_group_s || !wpa_group_s->parent || !ssid)
 		return;
@@ -1394,7 +1394,17 @@ void AidlManager::notifyP2pGroupStarted(
 	params.goDeviceAddress = macAddrToVec(wpa_group_s->go_dev_addr);
 	params.goInterfaceAddress = aidl_is_go ? macAddrToVec(wpa_group_s->own_addr) :
 			macAddrToVec(wpa_group_s->current_bss->bssid);
+	if (NULL != ip && !aidl_is_go) {
+		params.isP2pClientEapolIpAddressInfoPresent = true;
+		os_memcpy(&params.p2pClientIpInfo.ipAddressClient, &ip[0], 4);
+		os_memcpy(&params.p2pClientIpInfo.ipAddressMask, &ip[4], 4);
+		os_memcpy(&params.p2pClientIpInfo.ipAddressGo, &ip[8], 4);
 
+		wpa_printf(MSG_DEBUG, "P2P: IP Address allocated - CLI: 0x%x MASK: 0x%x GO: 0x%x",
+			   params.p2pClientIpInfo.ipAddressClient,
+			   params.p2pClientIpInfo.ipAddressMask,
+			   params.p2pClientIpInfo.ipAddressGo);
+        }
 	callWithEachP2pIfaceCallback(
 		misc_utils::charBufToString(wpa_s->ifname),
 		std::bind(&ISupplicantP2pIfaceCallback::onGroupStartedWithParams,
@@ -1780,18 +1790,22 @@ void AidlManager::notifyPmkCacheAdded(
 {
 	std::string aidl_ifname = misc_utils::charBufToString(wpa_s->ifname);
 
+	PmkSaCacheData aidl_pmksa_data = {};
+	aidl_pmksa_data.bssid = macAddrToVec(pmksa_entry->aa);
 	// Serialize PmkCacheEntry into blob.
 	std::stringstream ss(
 		std::stringstream::in | std::stringstream::out | std::stringstream::binary);
 	misc_utils::serializePmkCacheEntry(ss, pmksa_entry);
 	std::vector<uint8_t> serializedEntry(
 		std::istreambuf_iterator<char>(ss), {});
+	aidl_pmksa_data.serializedEntry = serializedEntry;
+	aidl_pmksa_data.expirationTimeInSec = pmksa_entry->expiration;
 
 	const std::function<
 		ndk::ScopedAStatus(std::shared_ptr<ISupplicantStaIfaceCallback>)>
 		func = std::bind(
-		&ISupplicantStaIfaceCallback::onPmkCacheAdded,
-		std::placeholders::_1, pmksa_entry->expiration, serializedEntry);
+		&ISupplicantStaIfaceCallback::onPmkSaCacheAdded,
+		std::placeholders::_1, aidl_pmksa_data);
 	callWithEachStaIfaceCallback(aidl_ifname, func);
 }
 

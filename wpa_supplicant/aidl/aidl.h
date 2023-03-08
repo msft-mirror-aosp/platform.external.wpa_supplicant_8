@@ -79,7 +79,7 @@ extern "C"
 		struct wpa_supplicant *wpa_s, const char *reason);
 	void wpas_aidl_notify_p2p_group_started(
 		struct wpa_supplicant *wpa_s, const struct wpa_ssid *ssid,
-		int persistent, int client);
+		int persistent, int client, const u8 *ip);
 	void wpas_aidl_notify_p2p_group_removed(
 		struct wpa_supplicant *wpa_s, const struct wpa_ssid *ssid,
 		const char *role);
@@ -209,7 +209,7 @@ static void wpas_aidl_notify_wps_event_pbc_overlap(struct wpa_supplicant *wpa_s)
 static void wpas_aidl_notify_p2p_device_found(
 	struct wpa_supplicant *wpa_s, const u8 *addr,
 	const struct p2p_peer_info *info, const u8 *peer_wfd_device_info,
-	u8 peer_wfd_device_info_lenconst, u8 *peer_wfd_r2_device_info,
+	u8 peer_wfd_device_info_len, const u8 *peer_wfd_r2_device_info,
 	u8 peer_wfd_r2_device_info_len)
 {}
 static void wpas_aidl_notify_p2p_device_lost(
@@ -228,7 +228,7 @@ static void wpas_aidl_notify_p2p_group_formation_failure(
 {}
 static void wpas_aidl_notify_p2p_group_started(
 	struct wpa_supplicant *wpa_s, const struct wpa_ssid *ssid, int persistent,
-	int client)
+	int client, const u8 *ip)
 {}
 static void wpas_aidl_notify_p2p_group_removed(
 	struct wpa_supplicant *wpa_s, const struct wpa_ssid *ssid, const char *role)
