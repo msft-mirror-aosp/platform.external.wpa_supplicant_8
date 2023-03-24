@@ -135,13 +135,17 @@ static void handle_read(int sock, void *eloop_ctx, void *sock_ctx)
 	handle_frame(drv, buf, len);
 }
 
-void set_virtio_sock(int sock)
+int set_virtio_sock(int sock)
 {
-	priv_drv->sock = sock;
-	if (priv_drv->sock > 0 &&
-			eloop_register_read_sock(priv_drv->sock, handle_read, priv_drv, NULL)) {
-		wpa_printf(MSG_ERROR, "virtio_wifi: Could not register read socket for eapol");
+	if (priv_drv) {
+		priv_drv->sock = sock;
+		if (priv_drv->sock > 0 &&
+			!eloop_register_read_sock(priv_drv->sock, handle_read, priv_drv, NULL)) {
+			return 0;
+		}
+		wpa_printf(MSG_ERROR, "virtio_wifi: Could not register read socket for eloop");
 	}
+	return -1;
 }
 
 static void handle_ctrl_cmds(int sock, void *eloop_ctx, void *sock_ctx)
@@ -169,13 +173,18 @@ static void handle_ctrl_cmds(int sock, void *eloop_ctx, void *sock_ctx)
 	}
 }
 
-void set_virtio_ctrl_sock(int sock)
+int set_virtio_ctrl_sock(int sock)
 {
-	priv_drv->ctrl_sock = sock;
-	if (priv_drv->ctrl_sock > 0 &&
-			eloop_register_read_sock(priv_drv->ctrl_sock, handle_ctrl_cmds, priv_drv, NULL)) {
-		wpa_printf(MSG_ERROR, "virtio_wifi: Could not register control socket for eapol");
+	if (priv_drv) {
+		priv_drv->ctrl_sock = sock;
+		if (priv_drv->ctrl_sock > 0 &&
+			!eloop_register_read_sock(priv_drv->ctrl_sock, handle_ctrl_cmds,
+				priv_drv, NULL)) {
+			return 0;
+		}
+		wpa_printf(MSG_ERROR, "virtio_wifi: Could not register control socket for eloop.");
 	}
+	return -1;
 }
 
 struct virtio_wifi_key_data get_active_ptk() {
