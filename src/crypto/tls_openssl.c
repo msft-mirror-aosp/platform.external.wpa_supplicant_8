@@ -172,6 +172,7 @@ static BIO* BIO_from_keystore(const char *alias)
 	BIO *bio = NULL;
 	uint8_t *value = NULL;
 	if (tls_global != NULL && certificate_callback_global != NULL) {
+		wpa_printf(MSG_INFO, "Retrieving certificate using callback");
 		int length = (*certificate_callback_global)(tls_global->cb_ctx, alias, &value);
 		if (length != -1 && (bio = BIO_new(BIO_s_mem())) != NULL)
 			BIO_write(bio, value, length);
@@ -3271,7 +3272,11 @@ static int tls_set_conn_flags(struct tls_connection *conn, unsigned int flags,
 		EC_KEY_free(ecdh);
 #endif
 	}
-	if (flags & (TLS_CONN_SUITEB | TLS_CONN_SUITEB_NO_ECDH)) {
+	if ((flags & (TLS_CONN_SUITEB | TLS_CONN_SUITEB_NO_ECDH))
+#ifdef EAP_TLSV1_3
+			&& (flags & TLS_CONN_DISABLE_TLSv1_3)
+#endif
+												 ) {
 #ifdef OPENSSL_IS_BORINGSSL
 		uint16_t sigalgs[1] = { SSL_SIGN_RSA_PKCS1_SHA384 };
 
@@ -5416,6 +5421,12 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 			   __func__, ERR_error_string(err, NULL));
 	}
 
+	if (tls_set_conn_flags(conn, params->flags,
+			       params->openssl_ciphers) < 0) {
+		wpa_printf(MSG_ERROR, "TLS: Failed to set connection flags");
+		return -1;
+	}
+
 	if (engine_id) {
 		wpa_printf(MSG_DEBUG, "SSL: Initializing TLS engine %s",
 			   engine_id);
@@ -5520,12 +5531,6 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 #endif /* OPENSSL_IS_BORINGSSL */
 	}
 
-	if (tls_set_conn_flags(conn, params->flags,
-			       params->openssl_ciphers) < 0) {
-		wpa_printf(MSG_ERROR, "TLS: Failed to set connection flags");
-		return -1;
-	}
-
 #ifdef OPENSSL_IS_BORINGSSL
 	if (params->flags & TLS_CONN_REQUEST_OCSP) {
 		SSL_enable_ocsp_stapling(conn->ssl);
@@ -5598,8 +5603,9 @@ static const char * openssl_pkey_type_str(const EVP_PKEY *pkey)
 		return "DH";
 	case EVP_PKEY_EC:
 		return "EC";
+	default:
+		return "?";
 	}
-	return "?";
 }
 
 

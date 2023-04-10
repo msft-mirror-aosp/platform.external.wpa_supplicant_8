@@ -517,7 +517,7 @@ void wpas_aidl_notify_p2p_group_formation_failure(
 
 void wpas_aidl_notify_p2p_group_started(
 	struct wpa_supplicant *wpa_s, const struct wpa_ssid *ssid, int persistent,
-	int client)
+	int client, const u8 *ip)
 {
 	if (!wpa_s || !ssid)
 		return;
@@ -530,7 +530,7 @@ void wpas_aidl_notify_p2p_group_started(
 	if (!aidl_manager)
 		return;
 
-	aidl_manager->notifyP2pGroupStarted(wpa_s, ssid, persistent, client);
+	aidl_manager->notifyP2pGroupStarted(wpa_s, ssid, persistent, client, ip);
 }
 
 void wpas_aidl_notify_p2p_group_removed(
@@ -1068,6 +1068,8 @@ ssize_t wpas_aidl_get_certificate(const char* alias, uint8_t** value)
 	AidlManager *aidl_manager = AidlManager::getInstance();
 	if (!aidl_manager)
 		return -1;
+
+	wpa_printf(MSG_INFO, "Requesting certificate from framework");
 
 	return aidl_manager->getCertificate(alias, value);
 }

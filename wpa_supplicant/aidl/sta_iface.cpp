@@ -290,6 +290,12 @@ const std::string convertCurveTypeToName(DppCurve curve)
 	WPA_ASSERT(false);
 }
 
+inline std::array<uint8_t, ETH_ALEN> macAddrToArray(const uint8_t* mac_addr) {
+	std::array<uint8_t, ETH_ALEN> arr;
+	std::copy(mac_addr, mac_addr + ETH_ALEN, std::begin(arr));
+	return arr;
+}
+
 }  // namespace
 
 namespace aidl {
@@ -835,14 +841,6 @@ bool StaIface::isValid()
 	return validateAndCall(
 	    this, SupplicantStatusCode::FAILURE_UNKNOWN,
 	    &StaIface::removeQosPolicyForScsInternal, _aidl_return, in_scsPolicyIds);
-}
-
-::ndk::ScopedAStatus StaIface::removeAllQosPoliciesForScs(
-		std::vector<QosPolicyScsRequestStatus>* _aidl_return)
-{
-	return validateAndCall(
-	    this, SupplicantStatusCode::FAILURE_UNKNOWN,
-	    &StaIface::removeAllQosPoliciesForScsInternal, _aidl_return);
 }
 
 std::pair<std::string, ndk::ScopedAStatus> StaIface::getNameInternal()
@@ -2014,6 +2012,7 @@ std::pair<MloLinksInfo, ndk::ScopedAStatus> StaIface::getConnectionMloLinksInfoI
 	MloLinksInfo linksInfo;
 	MloLink link;
 
+	linksInfo.apMldMacAddress = macAddrToArray(wpa_s->ap_mld_addr);
 	if (!wpa_s->valid_links)
 		 return {linksInfo, ndk::ScopedAStatus::ok()};
 
@@ -2022,9 +2021,16 @@ std::pair<MloLinksInfo, ndk::ScopedAStatus> StaIface::getConnectionMloLinksInfoI
 			continue;
 
 		wpa_printf(MSG_DEBUG, "Add MLO Link ID %d info", i);
+		// Associated link id.
+		if (os_memcmp(wpa_s->links[i].bssid, wpa_s->bssid, ETH_ALEN) == 0) {
+			linksInfo.apMloLinkId = i;
+		}
 		link.linkId = i;
-		link.staLinkMacAddress.assign(wpa_s->links[i].addr, wpa_s->links[i].addr + ETH_ALEN);
-		// TODO (b/259710591): Once suppllicant implements TID-to-link
+		link.staLinkMacAddress.assign(
+		    wpa_s->links[i].addr, wpa_s->links[i].addr + ETH_ALEN);
+		link.apLinkMacAddress = macAddrToArray(wpa_s->links[i].bssid);
+		link.frequencyMHz = wpa_s->links[i].freq;
+		// TODO (b/259710591): Once supplicant implements TID-to-link
 		// mapping, copy it here. Mapping can be changed in two
 		// scenarios
 		//    1. Mandatory mapping from AP
@@ -2060,18 +2066,18 @@ StaIface::getSignalPollResultsInternal()
 
 			SignalPollResult result;
 			result.linkId = 0;
-			result.currentRssiDbm = mlo_si.links[i].current_signal;
-			result.txBitrateMbps = mlo_si.links[i].current_txrate / 1000;
-			result.rxBitrateMbps = mlo_si.links[i].current_rxrate / 1000;
+			result.currentRssiDbm = mlo_si.links[i].data.signal;
+			result.txBitrateMbps = mlo_si.links[i].data.current_tx_rate / 1000;
+			result.rxBitrateMbps = mlo_si.links[i].data.current_rx_rate / 1000;
 			result.frequencyMhz = mlo_si.links[i].frequency;
 			results.push_back(result);
 		}
 	} else if (wpa_drv_signal_poll(wpa_s, &si) == 0) {
 		SignalPollResult result;
 		result.linkId = 0;
-		result.currentRssiDbm = si.current_signal;
-		result.txBitrateMbps = si.current_txrate / 1000;
-		result.rxBitrateMbps = si.current_rxrate / 1000;
+		result.currentRssiDbm = si.data.signal;
+		result.txBitrateMbps = si.data.current_tx_rate / 1000;
+		result.rxBitrateMbps = si.data.current_rx_rate / 1000;
 		result.frequencyMhz = si.frequency;
 		results.push_back(result);
 	}
@@ -2089,13 +2095,6 @@ StaIface::addQosPolicyRequestForScsInternal(const std::vector<QosPolicyScsData>&
 
 std::pair<std::vector<QosPolicyScsRequestStatus>, ndk::ScopedAStatus>
 StaIface::removeQosPolicyForScsInternal(const std::vector<uint8_t>& scsPolicyIds)
-{
-	return {std::vector<QosPolicyScsRequestStatus>(),
-		createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED)};
-}
-
-std::pair<std::vector<QosPolicyScsRequestStatus>, ndk::ScopedAStatus>
-StaIface::removeAllQosPoliciesForScsInternal()
 {
 	return {std::vector<QosPolicyScsRequestStatus>(),
 		createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED)};

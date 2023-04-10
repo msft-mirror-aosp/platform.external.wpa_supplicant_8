@@ -194,7 +194,7 @@ int joinGroup(
 
 	if (wpas_p2p_group_add_persistent(
 		wpa_s, wpa_network, 0, 0, freq, 0, ht40, vht,
-		CONF_OPER_CHWIDTH_USE_HT, he, 0, NULL, 0, 0, is6GhzAllowed(wpa_s), P2P_JOIN_LIMIT)) {
+		CONF_OPER_CHWIDTH_USE_HT, he, 0, NULL, 0, 0, is6GhzAllowed(wpa_s), P2P_JOIN_LIMIT, true)) {
 		ret = -1;
 	}
 
@@ -809,6 +809,16 @@ ndk::ScopedAStatus P2pIface::addGroup(
 		&P2pIface::setVendorElementsInternal, in_frameTypeMask, in_vendorElemBytes);
 }
 
+::ndk::ScopedAStatus P2pIface::configureEapolIpAddressAllocationParams(
+	int32_t in_ipAddressGo, int32_t in_ipAddressMask,
+	int32_t in_ipAddressStart, int32_t in_ipAddressEnd)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_IFACE_INVALID,
+		&P2pIface::configureEapolIpAddressAllocationParamsInternal,
+		in_ipAddressGo, in_ipAddressMask, in_ipAddressStart, in_ipAddressEnd);
+}
+
 std::pair<std::string, ndk::ScopedAStatus> P2pIface::getNameInternal()
 {
 	return {ifname_, ndk::ScopedAStatus::ok()};
@@ -1014,9 +1024,8 @@ std::pair<std::string, ndk::ScopedAStatus> P2pIface::connectInternal(
 	int edmg = wpa_s->conf->p2p_go_edmg;
 	const char* pin =
 		pre_selected_pin.length() > 0 ? pre_selected_pin.data() : nullptr;
-	bool auto_join = !join_existing_group;
 	int new_pin = wpas_p2p_connect(
-		wpa_s, peer_address.data(), pin, wps_method, persistent, auto_join,
+		wpa_s, peer_address.data(), pin, wps_method, persistent, false,
 		join_existing_group, false, go_intent_signed, 0, 0, -1, false, ht40,
 		vht, CONF_OPER_CHWIDTH_USE_HT, he, edmg, nullptr, 0, is6GhzAllowed(wpa_s));
 	if (new_pin < 0) {
@@ -1108,7 +1117,7 @@ ndk::ScopedAStatus P2pIface::inviteInternal(
 	const std::vector<uint8_t>& peer_address)
 {
 	struct wpa_supplicant* wpa_s = retrieveIfacePtr();
-	if (peer_address.size() != ETH_ALEN) {
+	if (go_device_address.size() != ETH_ALEN || peer_address.size() != ETH_ALEN) {
 		return {createStatus(SupplicantStatusCode::FAILURE_UNKNOWN)};
 	}
 	if (wpas_p2p_invite_group(
@@ -1609,7 +1618,7 @@ ndk::ScopedAStatus P2pIface::addGroupInternal(
 	} else if (ssid->disabled == 2) {
 		if (wpas_p2p_group_add_persistent(
 			wpa_s, ssid, 0, 0, 0, 0, ht40, vht,
-			CONF_OPER_CHWIDTH_USE_HT, he, edmg, NULL, 0, 0, is6GhzAllowed(wpa_s), 0)) {
+			CONF_OPER_CHWIDTH_USE_HT, he, edmg, NULL, 0, 0, is6GhzAllowed(wpa_s), 0, false)) {
 			return createStatus(SupplicantStatusCode::FAILURE_NETWORK_UNKNOWN);
 		} else {
 			return ndk::ScopedAStatus::ok();
@@ -1643,6 +1652,10 @@ ndk::ScopedAStatus P2pIface::addGroupWithConfigInternal(
 			"Passphrase is invalid.");
 	}
 
+	wpa_printf(MSG_DEBUG,
+		    "P2P: Add group with config Role: %s network name: %s freq: %d",
+		    joinExistingGroup ? "CLIENT" : "GO",
+		    wpa_ssid_txt(ssid.data(), ssid.size()), freq);
 	if (!joinExistingGroup) {
 		struct p2p_data *p2p = wpa_s->global->p2p;
 		os_memcpy(p2p->ssid, ssid.data(), ssid.size());
@@ -1822,6 +1835,23 @@ ndk::ScopedAStatus P2pIface::setVendorElementsInternal(
 			updateP2pVendorElem(wpa_s, (enum wpa_vendor_elem_frame) i, vendorElemBytes);
 		}
 	}
+	return ndk::ScopedAStatus::ok();
+}
+
+ndk::ScopedAStatus P2pIface::configureEapolIpAddressAllocationParamsInternal(
+	uint32_t ipAddressGo, uint32_t ipAddressMask,
+	uint32_t ipAddressStart, uint32_t ipAddressEnd)
+{
+	wpa_printf(MSG_DEBUG, "P2P: Configure IP addresses for IP allocation in EAPOL"
+		   " ipAddressGo: 0x%x mask: 0x%x Range - Start: 0x%x End: 0x%x",
+			ipAddressGo, ipAddressMask, ipAddressStart, ipAddressEnd);
+	struct wpa_supplicant* wpa_s = retrieveIfacePtr();
+
+	os_memcpy(wpa_s->conf->ip_addr_go, &ipAddressGo, 4);
+	os_memcpy(wpa_s->conf->ip_addr_mask, &ipAddressMask, 4);
+	os_memcpy(wpa_s->conf->ip_addr_start, &ipAddressStart, 4);
+	os_memcpy(wpa_s->conf->ip_addr_end, &ipAddressEnd, 4);
+
 	return ndk::ScopedAStatus::ok();
 }
 

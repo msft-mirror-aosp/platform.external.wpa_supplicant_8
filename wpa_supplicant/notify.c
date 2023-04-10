@@ -16,6 +16,7 @@
 #include "dbus/dbus_common.h"
 #include "dbus/dbus_new.h"
 #include "rsn_supp/wpa.h"
+#include "rsn_supp/pmksa_cache.h"
 #include "fst/fst.h"
 #include "crypto/tls.h"
 #include "bss.h"
@@ -24,7 +25,7 @@
 #include "p2p_supplicant.h"
 #include "sme.h"
 #include "notify.h"
-#include "aidl.h"
+#include "aidl/aidl.h"
 
 int wpas_notify_supplicant_initialized(struct wpa_global *global)
 {
@@ -234,6 +235,15 @@ void wpas_notify_bssid_changed(struct wpa_supplicant *wpa_s)
 	wpas_dbus_signal_prop_changed(wpa_s, WPAS_DBUS_PROP_CURRENT_BSS);
 
 	wpas_aidl_notify_bssid_changed(wpa_s);
+}
+
+
+void wpas_notify_mac_address_changed(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->p2p_mgmt)
+		return;
+
+	wpas_dbus_signal_prop_changed(wpa_s, WPAS_DBUS_PROP_MAC_ADDRESS);
 }
 
 
@@ -447,11 +457,6 @@ void wpas_notify_network_removed(struct wpa_supplicant *wpa_s,
 		wpas_notify_persistent_group_removed(wpa_s, ssid);
 
 	wpas_p2p_network_removed(wpa_s, ssid);
-
-#ifdef CONFIG_PASN
-	if (wpa_s->pasn.ssid == ssid)
-		wpa_s->pasn.ssid = NULL;
-#endif /* CONFIG_PASN */
 }
 
 
@@ -797,7 +802,7 @@ void wpas_notify_p2p_group_started(struct wpa_supplicant *wpa_s,
 
 	wpas_dbus_signal_p2p_group_started(wpa_s, client, persistent, ip);
 
-	wpas_aidl_notify_p2p_group_started(wpa_s, ssid, persistent, client);
+	wpas_aidl_notify_p2p_group_started(wpa_s, ssid, persistent, client, ip);
 }
 
 
@@ -1355,5 +1360,12 @@ void wpas_notify_frequency_changed(struct wpa_supplicant *wpa_s, int frequency)
 
 ssize_t wpas_get_certificate(const char *alias, uint8_t** value)
 {
+	wpa_printf(MSG_INFO, "wpas_get_certificate");
 	return wpas_aidl_get_certificate(alias, value);
+}
+
+
+void wpas_notify_signal_change(struct wpa_supplicant *wpa_s)
+{
+	wpas_dbus_signal_prop_changed(wpa_s, WPAS_DBUS_PROP_SIGNAL_CHANGE);
 }

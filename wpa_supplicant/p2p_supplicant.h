@@ -52,7 +52,8 @@ int wpas_p2p_group_add_persistent(struct wpa_supplicant *wpa_s,
 				  int max_oper_chwidth, int he, int edmg,
 				  const struct p2p_channels *channels,
 				  int connection_timeout, int force_scan,
-				  bool allow_6ghz, int retry_limit);
+				  bool allow_6ghz, int retry_limit,
+				  bool force_go_bssid);
 struct p2p_group * wpas_p2p_group_init(struct wpa_supplicant *wpa_s,
 				       struct wpa_ssid *ssid);
 enum wpas_p2p_prov_disc_use {
@@ -146,6 +147,9 @@ struct wpa_ssid * wpas_p2p_get_persistent(struct wpa_supplicant *wpa_s,
 void wpas_p2p_notify_ap_sta_authorized(struct wpa_supplicant *wpa_s,
 				       const u8 *addr);
 int wpas_p2p_scan_no_go_seen(struct wpa_supplicant *wpa_s);
+void wpas_p2p_scan_freqs(struct wpa_supplicant *wpa_s,
+			 struct wpa_driver_scan_params *params,
+			 bool include_6ghz);
 int wpas_p2p_get_sec_channel_offset_40mhz(struct wpa_supplicant *wpa_s,
 					  struct hostapd_hw_modes *mode,
 					  u8 channel);
