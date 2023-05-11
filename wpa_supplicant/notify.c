@@ -37,12 +37,6 @@ int wpas_notify_supplicant_initialized(struct wpa_global *global)
 	}
 #endif /* CONFIG_CTRL_IFACE_DBUS_NEW */
 
-#ifdef CONFIG_AIDL
-	global->aidl = wpas_aidl_init(global);
-	if (!global->aidl)
-		return -1;
-#endif /* CONFIG_AIDL */
-
 	return 0;
 }
 
@@ -68,9 +62,17 @@ int wpas_notify_iface_added(struct wpa_supplicant *wpa_s)
 			return -1;
 	}
 
+#ifdef CONFIG_AIDL
+	/* AIDL initialization may not be complete at this point.
+	 * Initialization is done after daemonizing in order to avoid
+	 * issues with the file descriptor.
+	 */
+	if (!wpa_s || !wpa_s->global->aidl)
+		return 0;
 	/* HIDL interface wants to keep track of the P2P mgmt iface. */
 	if (wpas_aidl_register_interface(wpa_s))
 		return -1;
+#endif
 
 	return 0;
 }
@@ -967,6 +969,12 @@ void wpas_notify_eap_error(struct wpa_supplicant *wpa_s, int error_code)
 }
 
 
+void wpas_notify_psk_mismatch(struct wpa_supplicant *wpa_s)
+{
+	wpas_dbus_signal_psk_mismatch(wpa_s);
+}
+
+
 void wpas_notify_network_bssid_set_changed(struct wpa_supplicant *wpa_s,
 					   struct wpa_ssid *ssid)
 {
@@ -1368,4 +1376,13 @@ ssize_t wpas_get_certificate(const char *alias, uint8_t** value)
 void wpas_notify_signal_change(struct wpa_supplicant *wpa_s)
 {
 	wpas_dbus_signal_prop_changed(wpa_s, WPAS_DBUS_PROP_SIGNAL_CHANGE);
+}
+
+void wpas_notify_qos_policy_scs_response(struct wpa_supplicant *wpa_s,
+		unsigned int num_scs_resp, int **scs_resp)
+{
+	if (!wpa_s || !num_scs_resp || !scs_resp)
+		return;
+
+	wpas_aidl_notify_qos_policy_scs_response(wpa_s, num_scs_resp, scs_resp);
 }
