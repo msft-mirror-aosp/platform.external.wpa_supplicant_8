@@ -2960,6 +2960,14 @@ bool is_p2p_6ghz_disabled(struct p2p_data *p2p)
 }
 
 
+bool is_p2p_dfs_chan_enabled(struct p2p_data *p2p)
+{
+	if (p2p)
+		return p2p->cfg->p2p_dfs_chan_enable;
+	return false;
+}
+
+
 struct p2p_data * p2p_init(const struct p2p_config *cfg)
 {
 	struct p2p_data *p2p;
@@ -4113,9 +4121,11 @@ static void p2p_timeout_invite(struct p2p_data *p2p)
 		/*
 		 * Better remain on operating channel instead of listen channel
 		 * when running a group.
+		 * Wait 120 ms to let the P2P GO to send its beacon on the
+		 * intended TBTT.
 		 */
 		p2p_dbg(p2p, "Inviting in active GO role - wait on operating channel");
-		p2p_set_timeout(p2p, 0, 100000);
+		p2p_set_timeout(p2p, 0, 120000);
 		return;
 	}
 	p2p_listen_in_find(p2p, 0);

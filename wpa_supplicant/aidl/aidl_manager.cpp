@@ -364,6 +364,12 @@ inline std::vector<uint8_t> macAddrToVec(const uint8_t* mac_addr) {
 	return byteArrToVec(mac_addr, ETH_ALEN);
 }
 
+inline std::array<uint8_t, ETH_ALEN> macAddrToArray(const uint8_t* mac_addr) {
+	std::array<uint8_t, ETH_ALEN> arr;
+	std::copy(mac_addr, mac_addr + ETH_ALEN, std::begin(arr));
+	return arr;
+}
+
 // Raw pointer to the global structure maintained by the core.
 // Declared here to be accessible to onDeath()
 struct wpa_global *wpa_global_;
@@ -640,6 +646,59 @@ int AidlManager::unregisterNetwork(
 	return 0;
 }
 
+// Some of the undefined AKMs in AIDL (Mostly extension AKMs like FT AKMs)
+// are mapped to the main AKM. This is for the framework to map the AKM to
+// correct security type.
+KeyMgmtMask convertSupplicantSelectedKeyMgmtForConnectionToAidl(int key_mgmt)
+{
+	switch (key_mgmt) {
+		case WPA_KEY_MGMT_IEEE8021X:
+			return KeyMgmtMask::WPA_EAP;
+		case WPA_KEY_MGMT_PSK:
+			return KeyMgmtMask::WPA_PSK;
+		case WPA_KEY_MGMT_NONE:
+			return KeyMgmtMask::NONE;
+		case WPA_KEY_MGMT_IEEE8021X_NO_WPA:
+			return KeyMgmtMask::IEEE8021X;
+		case WPA_KEY_MGMT_FT_IEEE8021X:
+			return KeyMgmtMask::FT_EAP;
+		case WPA_KEY_MGMT_FT_PSK:
+			return KeyMgmtMask::FT_PSK;
+		case WPA_KEY_MGMT_IEEE8021X_SHA256:
+			return KeyMgmtMask::WPA_EAP_SHA256;
+		case WPA_KEY_MGMT_PSK_SHA256:
+			return KeyMgmtMask::WPA_PSK_SHA256;
+		case WPA_KEY_MGMT_SAE:
+		case WPA_KEY_MGMT_FT_SAE:
+		case WPA_KEY_MGMT_SAE_EXT_KEY:
+		case WPA_KEY_MGMT_FT_SAE_EXT_KEY:
+			return KeyMgmtMask::SAE;
+		case WPA_KEY_MGMT_WAPI_PSK:
+			return KeyMgmtMask::WAPI_PSK;
+		case WPA_KEY_MGMT_WAPI_CERT:
+			return KeyMgmtMask::WAPI_CERT;
+		case WPA_KEY_MGMT_OSEN:
+			return KeyMgmtMask::OSEN;
+		case WPA_KEY_MGMT_IEEE8021X_SUITE_B_192:
+		case WPA_KEY_MGMT_FT_IEEE8021X_SHA384:
+			return KeyMgmtMask::SUITE_B_192;
+		case WPA_KEY_MGMT_FILS_SHA256:
+		case WPA_KEY_MGMT_FT_FILS_SHA256:
+			return KeyMgmtMask::FILS_SHA256;
+		case WPA_KEY_MGMT_FILS_SHA384:
+		case WPA_KEY_MGMT_FT_FILS_SHA384:
+			return KeyMgmtMask::FILS_SHA384;
+		case WPA_KEY_MGMT_OWE:
+			return KeyMgmtMask::OWE;
+		case WPA_KEY_MGMT_DPP:
+			return KeyMgmtMask::DPP;
+		default:
+			wpa_printf(MSG_INFO, "Unable to convert supplicant key_mgmt 0x%x to AIDL",
+				    key_mgmt);
+			return (KeyMgmtMask) key_mgmt;
+	}
+}
+
 /**
  * Notify all listeners about any state changes on a particular interface.
  *
@@ -669,14 +728,14 @@ int AidlManager::notifyStateChange(struct wpa_supplicant *wpa_s)
 		wpa_printf(MSG_INFO, "assoc key_mgmt 0x%x network key_mgmt 0x%x",
 			wpa_s->key_mgmt, wpa_s->current_ssid->key_mgmt);
 	}
-	std::vector<uint8_t> aidl_bssid;
+	std::array<uint8_t, ETH_ALEN> aidl_bssid;
 	// wpa_supplicant sets the |pending_bssid| field when it starts a
 	// connection. Only after association state does it update the |bssid|
 	// field. So, in the AIDL callback send the appropriate bssid.
 	if (wpa_s->wpa_state <= WPA_ASSOCIATED) {
-		aidl_bssid = macAddrToVec(wpa_s->pending_bssid);
+		aidl_bssid = macAddrToArray(wpa_s->pending_bssid);
 	} else {
-		aidl_bssid = macAddrToVec(wpa_s->bssid);
+		aidl_bssid = macAddrToArray(wpa_s->bssid);
 	}
 	aidl_state_change_data.bssid = aidl_bssid;
 
@@ -684,10 +743,17 @@ int AidlManager::notifyStateChange(struct wpa_supplicant *wpa_s)
 		(wpa_auth_alg_fils(wpa_s->auth_alg) &&
 		 !dl_list_empty(&wpa_s->fils_hlp_req) &&
 		 (wpa_s->wpa_state == WPA_COMPLETED)) ? true : false;
-	aidl_state_change_data.keyMgmtMask = (KeyMgmtMask) wpa_s->key_mgmt;
-	// wpa_supplicant sets the frequency on receiving the EVENT_ASSOC.
-	aidl_state_change_data.frequencyMhz =
-		wpa_s->wpa_state >= WPA_ASSOCIATED ? wpa_s->assoc_freq : 0;
+	if (wpa_s->wpa_state >= WPA_ASSOCIATED) {
+		// wpa_supplicant sets the frequency on receiving the EVENT_ASSOC.
+		aidl_state_change_data.frequencyMhz = wpa_s->assoc_freq;
+		// The key_mgmt is selected prior to sending the connect command
+		// to driver. But in case of CROSS-AKM Connection/Roaming, the
+		// key_mgmt is updated with the one from association IE. So the
+		// selected key_mgmt is accurate only after moving to
+		// associated state.
+		aidl_state_change_data.keyMgmtMask =
+			convertSupplicantSelectedKeyMgmtForConnectionToAidl(wpa_s->key_mgmt);
+	}
 
 	// Invoke the |onStateChanged| method on all registered callbacks.
 	std::function<
@@ -1391,9 +1457,9 @@ void AidlManager::notifyP2pGroupStarted(
 	params.psk = aidl_psk;
 	params.passphrase = misc_utils::charBufToString(ssid->passphrase);
 	params.isPersistent = aidl_is_persistent;
-	params.goDeviceAddress = macAddrToVec(wpa_group_s->go_dev_addr);
-	params.goInterfaceAddress = aidl_is_go ? macAddrToVec(wpa_group_s->own_addr) :
-			macAddrToVec(wpa_group_s->current_bss->bssid);
+	params.goDeviceAddress = macAddrToArray(wpa_group_s->go_dev_addr);
+	params.goInterfaceAddress = aidl_is_go ? macAddrToArray(wpa_group_s->own_addr) :
+			macAddrToArray(wpa_group_s->current_bss->bssid);
 	if (NULL != ip && !aidl_is_go) {
 		params.isP2pClientEapolIpAddressInfoPresent = true;
 		os_memcpy(&params.p2pClientIpInfo.ipAddressClient, &ip[0], 4);
@@ -1791,7 +1857,7 @@ void AidlManager::notifyPmkCacheAdded(
 	std::string aidl_ifname = misc_utils::charBufToString(wpa_s->ifname);
 
 	PmkSaCacheData aidl_pmksa_data = {};
-	aidl_pmksa_data.bssid = macAddrToVec(pmksa_entry->aa);
+	aidl_pmksa_data.bssid = macAddrToArray(pmksa_entry->aa);
 	// Serialize PmkCacheEntry into blob.
 	std::stringstream ss(
 		std::stringstream::in | std::stringstream::out | std::stringstream::binary);
@@ -2052,17 +2118,15 @@ void AidlManager::notifyCertification(struct wpa_supplicant *wpa_s,
 		return;
 	}
 	struct wpa_ssid *current_ssid = wpa_s->current_ssid;
+	if (!wpa_key_mgmt_wpa_ieee8021x(current_ssid->key_mgmt)) {
+		return;
+	}
 	if (NULL == subject || NULL == cert_hash || NULL == cert) {
 		wpa_printf(MSG_ERROR,
 				"Incomplete certificate information. Drop Certification event!");
 		return;
 	}
-	if (!wpa_key_mgmt_wpa_ieee8021x(current_ssid->key_mgmt)) {
-		wpa_printf(MSG_ERROR, "Not 802.1x configuration, Drop Certification event!");
-		return;
-	}
-	if (current_ssid->eap.cert.ca_path || current_ssid->eap.cert.ca_cert) {
-		wpa_printf(MSG_DEBUG, "Already has CA certificate. Drop Certification event!");
+	if (current_ssid->eap.cert.ca_cert) {
 		return;
 	}
 
@@ -2601,6 +2665,99 @@ ssize_t AidlManager::getCertificate(const char* alias, uint8_t** value) {
 		return cert->size();
 	}
 	return -1;
+}
+
+ssize_t AidlManager::listAliases(const char *prefix, char ***aliases) {
+	if (prefix == nullptr || aliases == nullptr) {
+		wpa_printf(MSG_ERROR, "Null pointer argument was passed to listAliases");
+		return -1;
+	}
+
+	if (auto results =
+			certificate_utils::listAliases(prefix, non_standard_cert_callback_)) {
+		int count = results->size();
+		*aliases = (char **) os_malloc(sizeof(char *) * count);
+		if (*aliases == nullptr) {
+			wpa_printf(MSG_ERROR, "listAliases: os_malloc alias array error");
+			return -1;
+		}
+		os_memset(*aliases, 0, sizeof(char *) * count);
+
+		int index = 0;
+		for (auto it = results->begin(); it != results->end(); ++it) {
+			int alias_len = it->length();
+			char *alias = (char *) os_malloc(alias_len + 1);
+			if (alias == nullptr) {
+				wpa_printf(MSG_ERROR, "listAliases: os_malloc alias string error");
+				for (int i = 0; i < index; ++i) os_free((*aliases)[i]);
+				os_free(*aliases);
+				return -1;
+			}
+			os_memcpy(alias, it->data(), alias_len + 1);
+			(*aliases)[index] = alias;
+			index++;
+		}
+		return count;
+	}
+	return -1;
+}
+
+QosPolicyScsResponseStatusCode getQosPolicyScsResponseStatusCode(int scsResponseCode)
+{
+	QosPolicyScsResponseStatusCode status = QosPolicyScsResponseStatusCode::TIMEOUT;
+	/* Status code as per Ieee802.11-2020 Table 9-50—Status codes */
+	switch (scsResponseCode) {
+		case 0: /* SUCCESS */
+			status = QosPolicyScsResponseStatusCode::SUCCESS;
+			break;
+		case 37: /* REQUEST_DECLINED */
+			status = QosPolicyScsResponseStatusCode::TCLAS_REQUEST_DECLINED;
+			break;
+		case 56: /* REQUESTED_TCLAS_NOT_SUPPORTED */
+		case 80: /* REQUESTED_TCLAS_NOT_SUPPORTED */
+			status = QosPolicyScsResponseStatusCode::TCLAS_NOT_SUPPORTED_BY_AP;
+			break;
+		case 57: /* INSUFFICIENT_TCLAS_PROCESSING_RESOURCES */
+			status = QosPolicyScsResponseStatusCode::TCLAS_INSUFFICIENT_RESOURCES;
+			break;
+		case 81: /* TCLAS_RESOURCES_EXHAUSTED */
+			status = QosPolicyScsResponseStatusCode::TCLAS_RESOURCES_EXHAUSTED;
+			break;
+		case 128: /* TCLAS_PROCESSING_TERMINATED_INSUFFICIENT_QOS */
+			status = QosPolicyScsResponseStatusCode::TCLAS_PROCESSING_TERMINATED_INSUFFICIENT_QOS;
+			break;
+		case 129: /* TCLAS_PROCESSING_TERMINATED_POLICY_CONFLICT */
+			status = QosPolicyScsResponseStatusCode::TCLAS_PROCESSING_TERMINATED_POLICY_CONFLICT;
+			break;
+		case 97: /* TCLAS_PROCESSING_TERMINATED */
+			status = QosPolicyScsResponseStatusCode::TCLAS_PROCESSING_TERMINATED;
+			break;
+		default:
+			status = QosPolicyScsResponseStatusCode::TIMEOUT;
+			break;
+		return status;
+	}
+	return status;
+}
+
+void AidlManager::notifyQosPolicyScsResponse(struct wpa_supplicant *wpa_s,
+		unsigned int count, int **scs_resp)
+{
+	if (!wpa_s || !count || !scs_resp)
+		return;
+
+	std::vector<QosPolicyScsResponseStatus> scsResponses;
+
+	for (int i = 0; i < count; i++) {
+		QosPolicyScsResponseStatus resp;
+		resp.policyId = scs_resp[0][i] & 0xFF;
+		resp.qosPolicyScsResponseStatusCode = getQosPolicyScsResponseStatusCode(scs_resp[1][i]);
+		scsResponses.push_back(resp);
+	}
+	callWithEachStaIfaceCallback(
+		misc_utils::charBufToString(wpa_s->ifname), std::bind(
+			&ISupplicantStaIfaceCallback::onQosPolicyResponseForScs,
+			std::placeholders::_1, scsResponses));
 }
 
 }  // namespace supplicant
