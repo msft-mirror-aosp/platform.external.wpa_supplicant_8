@@ -178,6 +178,9 @@ public:
 	::ndk::ScopedAStatus connectWithParams(
 		const P2pConnectInfo& in_connectInfo, std::string* _aidl_return) override;
 	::ndk::ScopedAStatus findWithParams(const P2pDiscoveryInfo& in_discoveryInfo) override;
+	::ndk::ScopedAStatus configureExtListenWithParams(
+		const P2pExtListenInfo& in_extListenInfo) override;
+
 
 private:
 	// Corresponding worker functions for the AIDL methods.
@@ -304,6 +307,7 @@ private:
 	std::pair<std::string, ndk::ScopedAStatus> connectWithParamsInternal(
 		const P2pConnectInfo& connectInfo);
 	ndk::ScopedAStatus findWithParamsInternal(const P2pDiscoveryInfo& discoveryInfo);
+	ndk::ScopedAStatus configureExtListenWithParamsInternal(const P2pExtListenInfo& extListenInfo);
 
 	struct wpa_supplicant* retrieveIfacePtr();
 	struct wpa_supplicant* retrieveGroupIfacePtr(

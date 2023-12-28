@@ -830,6 +830,14 @@ ndk::ScopedAStatus P2pIface::addGroup(
 		&P2pIface::findWithParamsInternal, in_discoveryInfo);
 }
 
+::ndk::ScopedAStatus P2pIface::configureExtListenWithParams(
+		const P2pExtListenInfo& in_extListenInfo)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_IFACE_INVALID,
+		&P2pIface::configureExtListenWithParamsInternal, in_extListenInfo);
+}
+
 std::pair<std::string, ndk::ScopedAStatus> P2pIface::getNameInternal()
 {
 	return {ifname_, ndk::ScopedAStatus::ok()};
@@ -1892,6 +1900,12 @@ ndk::ScopedAStatus P2pIface::findWithParamsInternal(const P2pDiscoveryInfo& disc
 				"findWithParams received invalid scan type %d", discoveryInfo.scanType);
 			return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
 	}
+}
+
+ndk::ScopedAStatus P2pIface::configureExtListenWithParamsInternal(
+	const P2pExtListenInfo& extListenInfo)
+{
+	return configureExtListenInternal(extListenInfo.periodMs, extListenInfo.intervalMs);
 }
 
 /**
