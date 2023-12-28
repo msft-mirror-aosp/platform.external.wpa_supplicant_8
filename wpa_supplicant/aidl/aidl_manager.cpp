@@ -1611,7 +1611,7 @@ void AidlManager::notifyP2pProvisionDiscovery(
 		params.p2pDeviceAddress =  macAddrToArray(dev_addr);
 		params.isRequest = aidl_is_request;
 		params.status = static_cast<P2pProvDiscStatusCode>(status);
-		params.configMethods = static_cast<WpsConfigMethods>(config_methods);
+		params.configMethods = config_methods;
 		params.generatedPin = aidl_generated_pin;
 		if (group_ifname != NULL) {
 			params.groupInterfaceName = misc_utils::charBufToString(group_ifname);
