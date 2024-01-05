@@ -955,7 +955,7 @@ u16 hostapd_process_ml_assoc_req(struct hostapd_data *hapd,
 		goto out;
 	}
 
-	wpa_printf(MSG_DEBUG, "MLD: expected_common_info_len=%lu",
+	wpa_printf(MSG_DEBUG, "MLD: expected_common_info_len=%zu",
 		   common_info_len);
 
 	if (sizeof(*ml) + common_info_len > ml_len) {
@@ -1125,7 +1125,7 @@ u16 hostapd_process_ml_assoc_req(struct hostapd_data *hapd,
 		ml_len -= sub_elem_len;
 
 		wpa_printf(MSG_DEBUG, "MLD: link ctrl=0x%x, " MACSTR
-			   ", nstr bitmap len=%lu",
+			   ", nstr bitmap len=%zu",
 			   control, MAC2STR(link_info->peer_addr),
 			   link_info->nstr_bitmap_len);
 
