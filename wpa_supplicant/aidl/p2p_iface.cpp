@@ -838,6 +838,13 @@ ndk::ScopedAStatus P2pIface::addGroup(
 		&P2pIface::configureExtListenWithParamsInternal, in_extListenInfo);
 }
 
+::ndk::ScopedAStatus P2pIface::addGroupWithConfigurationParams(
+		const P2pAddGroupConfigurationParams& in_groupConfigurationParams)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_IFACE_INVALID,
+		&P2pIface::addGroupWithConfigurationParamsInternal, in_groupConfigurationParams);
+}
 std::pair<std::string, ndk::ScopedAStatus> P2pIface::getNameInternal()
 {
 	return {ifname_, ndk::ScopedAStatus::ok()};
@@ -1906,6 +1913,19 @@ ndk::ScopedAStatus P2pIface::configureExtListenWithParamsInternal(
 	const P2pExtListenInfo& extListenInfo)
 {
 	return configureExtListenInternal(extListenInfo.periodMs, extListenInfo.intervalMs);
+}
+
+ndk::ScopedAStatus P2pIface::addGroupWithConfigurationParamsInternal(
+	const P2pAddGroupConfigurationParams& groupConfigurationParams)
+{
+	std::vector<uint8_t> goInterfaceAddressVec {
+		groupConfigurationParams.goInterfaceAddress.begin(),
+		groupConfigurationParams.goInterfaceAddress.end()};
+	return addGroupWithConfigInternal(
+		groupConfigurationParams.ssid, groupConfigurationParams.passphrase,
+		groupConfigurationParams.isPersistent, groupConfigurationParams.frequencyMHzOrBand,
+		goInterfaceAddressVec,
+		groupConfigurationParams.joinExistingGroup);
 }
 
 /**
