@@ -6889,14 +6889,8 @@ static int nl80211_connect_common(struct wpa_driver_nl80211_data *drv,
 
 		if (params->wpa_proto & WPA_PROTO_WPA)
 			ver |= NL80211_WPA_VERSION_1;
-		if (params->wpa_proto & WPA_PROTO_RSN) {
-#if !defined(CONFIG_DRIVER_NL80211_BRCM) && !defined(CONFIG_DRIVER_NL80211_SYNA)
-			if (wpa_key_mgmt_sae(params->key_mgmt_suite))
-				ver |= NL80211_WPA_VERSION_3;
-			else
-#endif
-				ver |= NL80211_WPA_VERSION_2;
-		}
+		if (params->wpa_proto & WPA_PROTO_RSN)
+			ver |= NL80211_WPA_VERSION_2;
 
 		wpa_printf(MSG_DEBUG, "  * WPA Versions 0x%x", ver);
 		if (nla_put_u32(msg, NL80211_ATTR_WPA_VERSIONS, ver))
