@@ -26,7 +26,6 @@ extern "C"
 }
 
 namespace {
-using aidl::android::hardware::wifi::WifiChannelWidthInMhz;
 using aidl::android::hardware::wifi::supplicant::AidlManager;
 using aidl::android::hardware::wifi::supplicant::BtCoexistenceMode;
 using aidl::android::hardware::wifi::supplicant::ConnectionCapabilities;
@@ -41,6 +40,19 @@ using aidl::android::hardware::wifi::supplicant::RxFilterType;
 using aidl::android::hardware::wifi::supplicant::SupplicantStatusCode;
 using aidl::android::hardware::wifi::supplicant::WifiTechnology;
 using aidl::android::hardware::wifi::supplicant::misc_utils::createStatus;
+
+// TODO (b/204810426): Import from wifi vendor AIDL interface when it exists
+enum WifiChannelWidthInMhz {
+  WIDTH_20	= 0,
+  WIDTH_40	= 1,
+  WIDTH_80	= 2,
+  WIDTH_160   = 3,
+  WIDTH_80P80 = 4,
+  WIDTH_5	 = 5,
+  WIDTH_10	= 6,
+  WIDTH_320	= 7,
+  WIDTH_INVALID = -1
+};
 
 constexpr uint32_t kMaxAnqpElems = 100;
 constexpr char kGetMacAddress[] = "MACADDR";
@@ -1845,32 +1857,32 @@ StaIface::getConnectionCapabilitiesInternal()
 		}
 		switch (wpa_s->connection_channel_bandwidth) {
 		case CHAN_WIDTH_20:
-			capa.channelBandwidth = static_cast<int32_t>(WifiChannelWidthInMhz::WIDTH_20);
+			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_20;
 			break;
 		case CHAN_WIDTH_40:
-			capa.channelBandwidth = static_cast<int32_t>(WifiChannelWidthInMhz::WIDTH_40);
+			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_40;
 			break;
 		case CHAN_WIDTH_80:
-			capa.channelBandwidth = static_cast<int32_t>(WifiChannelWidthInMhz::WIDTH_80);
+			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_80;
 			break;
 		case CHAN_WIDTH_160:
-			capa.channelBandwidth = static_cast<int32_t>(WifiChannelWidthInMhz::WIDTH_160);
+			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_160;
 			break;
 		case CHAN_WIDTH_80P80:
-			capa.channelBandwidth = static_cast<int32_t>(WifiChannelWidthInMhz::WIDTH_80P80);
+			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_80P80;
 			break;
 		case CHAN_WIDTH_320:
-			capa.channelBandwidth = static_cast<int32_t>(WifiChannelWidthInMhz::WIDTH_320);
+			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_320;
 			break;
 		default:
-			capa.channelBandwidth = static_cast<int32_t>(WifiChannelWidthInMhz::WIDTH_20);
+			capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_20;
 			break;
 		}
 		capa.maxNumberRxSpatialStreams = wpa_s->connection_max_nss_rx;
 		capa.maxNumberTxSpatialStreams = wpa_s->connection_max_nss_tx;
 	} else {
 		capa.technology = WifiTechnology::UNKNOWN;
-		capa.channelBandwidth = static_cast<int32_t>(WifiChannelWidthInMhz::WIDTH_20);
+		capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_20;
 		capa.maxNumberTxSpatialStreams = 1;
 		capa.maxNumberRxSpatialStreams = 1;
 		capa.legacyMode = LegacyMode::UNKNOWN;
