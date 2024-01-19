@@ -14,7 +14,6 @@
 
 #include <android-base/macros.h>
 
-#include <aidl/android/hardware/wifi/WifiChannelWidthInMhz.h>
 #include <aidl/android/hardware/wifi/supplicant/AnqpInfoId.h>
 #include <aidl/android/hardware/wifi/supplicant/BnSupplicantStaIface.h>
 #include <aidl/android/hardware/wifi/supplicant/BtCoexistenceMode.h>
