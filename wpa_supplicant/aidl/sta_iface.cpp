@@ -41,7 +41,8 @@ using aidl::android::hardware::wifi::supplicant::SupplicantStatusCode;
 using aidl::android::hardware::wifi::supplicant::WifiTechnology;
 using aidl::android::hardware::wifi::supplicant::misc_utils::createStatus;
 
-// TODO (b/204810426): Import from wifi vendor AIDL interface when it exists
+// Enum definition copied from the Vendor HAL interface.
+// See android.hardware.wifi.WifiChannelWidthInMhz
 enum WifiChannelWidthInMhz {
   WIDTH_20	= 0,
   WIDTH_40	= 1,
