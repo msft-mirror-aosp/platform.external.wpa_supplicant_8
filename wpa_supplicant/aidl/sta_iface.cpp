@@ -41,7 +41,8 @@ using aidl::android::hardware::wifi::supplicant::SupplicantStatusCode;
 using aidl::android::hardware::wifi::supplicant::WifiTechnology;
 using aidl::android::hardware::wifi::supplicant::misc_utils::createStatus;
 
-// TODO (b/204810426): Import from wifi vendor AIDL interface when it exists
+// Enum definition copied from the Vendor HAL interface.
+// See android.hardware.wifi.WifiChannelWidthInMhz
 enum WifiChannelWidthInMhz {
   WIDTH_20	= 0,
   WIDTH_40	= 1,
@@ -843,6 +844,18 @@ bool StaIface::isValid()
 	    &StaIface::removeQosPolicyForScsInternal, _aidl_return, in_scsPolicyIds);
 }
 
+::ndk::ScopedAStatus StaIface::configureMscs(const MscsParams& in_params) {
+	return validateAndCall(
+	    this, SupplicantStatusCode::FAILURE_UNKNOWN,
+	    &StaIface::configureMscsInternal, in_params);
+}
+
+::ndk::ScopedAStatus StaIface::disableMscs() {
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_UNKNOWN,
+		&StaIface::disableMscsInternal);
+}
+
 std::pair<std::string, ndk::ScopedAStatus> StaIface::getNameInternal()
 {
 	return {ifname_, ndk::ScopedAStatus::ok()};
@@ -1087,6 +1100,7 @@ ndk::ScopedAStatus StaIface::initiateAnqpQueryInternal(
 	if (info_elements.size() > kMaxAnqpElems) {
 		return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
 	}
+#ifdef CONFIG_INTERWORKING
 	uint16_t info_elems_buf[kMaxAnqpElems];
 	uint32_t num_info_elems = 0;
 	for (const auto &info_element : info_elements) {
@@ -1110,11 +1124,15 @@ ndk::ScopedAStatus StaIface::initiateAnqpQueryInternal(
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
 	return ndk::ScopedAStatus::ok();
+#else
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+#endif /* CONFIG_INTERWORKING */
 }
 
 ndk::ScopedAStatus StaIface::initiateVenueUrlAnqpQueryInternal(
 	const std::vector<uint8_t> &mac_address)
 {
+#ifdef CONFIG_INTERWORKING
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	uint16_t info_elems_buf[1] = {ANQP_VENUE_URL};
 	if (mac_address.size() != ETH_ALEN) {
@@ -1126,11 +1144,15 @@ ndk::ScopedAStatus StaIface::initiateVenueUrlAnqpQueryInternal(
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
 	return ndk::ScopedAStatus::ok();
+#else
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+#endif /* CONFIG_INTERWORKING */
 }
 
 ndk::ScopedAStatus StaIface::initiateHs20IconQueryInternal(
 	const std::vector<uint8_t> &mac_address, const std::string &file_name)
 {
+#ifdef CONFIG_HS20
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	if (mac_address.size() != ETH_ALEN) {
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
@@ -1143,6 +1165,9 @@ ndk::ScopedAStatus StaIface::initiateHs20IconQueryInternal(
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
 	return ndk::ScopedAStatus::ok();
+#else
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+#endif /* CONFIG_HS20 */
 }
 
 std::pair<std::vector<uint8_t>, ndk::ScopedAStatus>
@@ -2009,6 +2034,7 @@ ndk::ScopedAStatus StaIface::removeAllQosPoliciesInternal()
 std::pair<MloLinksInfo, ndk::ScopedAStatus> StaIface::getConnectionMloLinksInfoInternal()
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	struct driver_sta_mlo_info mlo;
 	MloLinksInfo linksInfo;
 	MloLink link;
 
@@ -2016,6 +2042,7 @@ std::pair<MloLinksInfo, ndk::ScopedAStatus> StaIface::getConnectionMloLinksInfoI
 	if (!wpa_s->valid_links)
 		 return {linksInfo, ndk::ScopedAStatus::ok()};
 
+	wpas_drv_get_sta_mlo_info(wpa_s, &mlo);
 	for (int i = 0; i < MAX_NUM_MLD_LINKS; i++) {
 		if (!(wpa_s->valid_links & BIT(i)))
 			continue;
@@ -2043,8 +2070,13 @@ std::pair<MloLinksInfo, ndk::ScopedAStatus> StaIface::getConnectionMloLinksInfoI
 		// mapping by the AP, a default TID-to-link mapping is assumed
 		// unless an individual TID-to-link mapping is successfully
 		// negotiated.
-		link.tidsUplinkMap = 0xFF;
-		link.tidsDownlinkMap = 0xFF;
+		if (!mlo.default_map) {
+			link.tidsUplinkMap = mlo.links[i].t2lmap.uplink;
+			link.tidsDownlinkMap = mlo.links[i].t2lmap.downlink;
+		} else {
+			link.tidsUplinkMap = 0xFF;
+			link.tidsDownlinkMap = 0xFF;
+		}
 		linksInfo.links.push_back(link);
 	}
 
@@ -2406,6 +2438,14 @@ StaIface::removeQosPolicyForScsInternal(const std::vector<uint8_t>& scsPolicyIds
 
 	return {std::vector<QosPolicyScsRequestStatus>(reports),
 		ndk::ScopedAStatus::ok()};
+}
+
+::ndk::ScopedAStatus StaIface::configureMscsInternal(const MscsParams& params) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+::ndk::ScopedAStatus StaIface::disableMscsInternal() {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
 }
 
 /**

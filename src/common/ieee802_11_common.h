@@ -55,7 +55,7 @@ struct ieee802_11_elems {
 	const u8 *peer_mgmt;
 	const u8 *vht_capabilities;
 	const u8 *vht_operation;
-	const u8 *vht_opmode_notif;
+	const u8 *opmode_notif;
 	const u8 *vendor_ht_cap;
 	const u8 *vendor_vht;
 	const u8 *p2p;
@@ -174,6 +174,8 @@ struct ieee802_11_elems {
 
 	struct mb_ies_info mb_ies;
 
+	size_t fte_defrag_len;
+
 	/*
 	 * The number of fragment elements to be skipped after a known
 	 * fragmented element.
@@ -259,6 +261,7 @@ extern const struct oper_class_map global_op_class[];
 extern size_t global_op_class_size;
 
 const u8 * get_ie(const u8 *ies, size_t len, u8 eid);
+const u8 * get_ie_nth(const u8 *ies, size_t len, u8 eid, int nth);
 const u8 * get_ie_ext(const u8 *ies, size_t len, u8 ext);
 const u8 * get_vendor_ie(const u8 *ies, size_t len, u32 vendor_type);
 
