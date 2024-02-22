@@ -3351,6 +3351,9 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 			}
 			if (req_elems.rrm_enabled)
 				wpa_s->rrm.rrm_used = 1;
+			wpa_s->ap_t2lm_negotiation_support =
+				is_ap_t2lm_negotiation_supported(resp_elems.basic_mle,
+				resp_elems.basic_mle_len);
 		}
 	}
 

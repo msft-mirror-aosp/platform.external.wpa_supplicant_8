@@ -1881,6 +1881,7 @@ StaIface::getConnectionCapabilitiesInternal()
 		}
 		capa.maxNumberRxSpatialStreams = wpa_s->connection_max_nss_rx;
 		capa.maxNumberTxSpatialStreams = wpa_s->connection_max_nss_tx;
+		capa.apTidToLinkMapNegotiationSupported = wpa_s->ap_t2lm_negotiation_support;
 	} else {
 		capa.technology = WifiTechnology::UNKNOWN;
 		capa.channelBandwidth = WifiChannelWidthInMhz::WIDTH_20;
@@ -2441,11 +2442,11 @@ StaIface::removeQosPolicyForScsInternal(const std::vector<uint8_t>& scsPolicyIds
 }
 
 ::ndk::ScopedAStatus StaIface::configureMscsInternal(const MscsParams& params) {
-	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+	return ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus StaIface::disableMscsInternal() {
-	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+	return ndk::ScopedAStatus::ok();
 }
 
 /**
