@@ -2442,10 +2442,45 @@ StaIface::removeQosPolicyForScsInternal(const std::vector<uint8_t>& scsPolicyIds
 }
 
 ::ndk::ScopedAStatus StaIface::configureMscsInternal(const MscsParams& params) {
+	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	struct robust_av_data *robust_av = &wpa_s->robust_av;
+	os_memset(robust_av, 0, sizeof(struct robust_av_data));
+
+	if (params.upLimit < 0 || params.upLimit > 7) {
+		wpa_printf(MSG_ERROR, "Invalid MSCS params - upLimit=%d", params.upLimit);
+		return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
+	}
+	if (params.streamTimeoutUs < 0 || params.streamTimeoutUs > 60000000 /* 60 sec */) {
+		wpa_printf(MSG_ERROR, "Invalid MSCS params - streamTimeoutUs=%d", params.streamTimeoutUs);
+		return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
+	}
+
+	robust_av->request_type = SCS_REQ_ADD;
+	robust_av->up_bitmap = params.upBitmap;
+	robust_av->up_limit = params.upLimit;
+	robust_av->stream_timeout = params.streamTimeoutUs;
+	robust_av->frame_classifier[0] = params.frameClassifierMask;  // single type-4 frame classifier mask
+	robust_av->frame_classifier_len = 1;
+
+	int status = wpas_send_mscs_req(wpa_s);
+	wpa_printf(MSG_INFO, "MSCS add request status: %d", status);
+
+	// Mark config as invalid to avoid retransmitting automatically.
+	robust_av->valid_config = false;
 	return ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus StaIface::disableMscsInternal() {
+	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	struct robust_av_data *robust_av = &wpa_s->robust_av;
+	os_memset(robust_av, 0, sizeof(struct robust_av_data));
+
+	robust_av->request_type = SCS_REQ_REMOVE;
+	robust_av->valid_config = false;
+
+	int status = wpas_send_mscs_req(wpa_s);
+	wpa_printf(MSG_INFO, "MSCS remove request status: %d", status);
+
 	return ndk::ScopedAStatus::ok();
 }
 
