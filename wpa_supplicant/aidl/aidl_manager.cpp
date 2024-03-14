@@ -16,6 +16,7 @@
 #include <android/binder_process.h>
 #include <android/binder_manager.h>
 #include <aidl/android/hardware/wifi/supplicant/IpVersion.h>
+#include <cutils/properties.h>
 
 extern "C" {
 #include "scan.h"
@@ -38,6 +39,7 @@ constexpr size_t kUmtsRandLenBytes = EAP_AKA_RAND_LEN;
 constexpr size_t kUmtsAutnLenBytes = EAP_AKA_AUTN_LEN;
 const std::vector<uint8_t> kZeroBssid = {0, 0, 0, 0, 0, 0};
 int32_t aidl_service_version = 0;
+int32_t sdk_level = 0;
 
 using aidl::android::hardware::wifi::supplicant::GsmRand;
 using aidl::android::hardware::wifi::supplicant::KeyMgmtMask;
@@ -414,6 +416,11 @@ int32_t AidlManager::isAidlServiceVersionAtLeast(int32_t expected_version)
 	return expected_version <= aidl_service_version;
 }
 
+int32_t AidlManager::isSdkLevelAtLeast(int32_t expected_version)
+{
+	return expected_version <= sdk_level;
+}
+
 int AidlManager::registerAidlService(struct wpa_global *global)
 {
 	// Create the main aidl service object and register it.
@@ -422,7 +429,9 @@ int AidlManager::registerAidlService(struct wpa_global *global)
 	if (!supplicant_object_->getInterfaceVersion(&aidl_service_version).isOk()) {
 		aidl_service_version = Supplicant::version;
 	}
+	sdk_level = property_get_int32("ro.build.version.sdk", 0);
 	wpa_printf(MSG_INFO, "AIDL Interface version: %d", aidl_service_version);
+	wpa_printf(MSG_INFO, "Sdk version: %d", sdk_level);
 	wpa_global_ = global;
 	std::string instance = std::string() + Supplicant::descriptor + "/default";
 	if (AServiceManager_addService(supplicant_object_->asBinder().get(),
@@ -1345,7 +1354,7 @@ void AidlManager::notifyP2pDeviceFound(
 			std::back_inserter(aidl_vendor_elems));
 	}
 
-	if (isAidlServiceVersionAtLeast(3)) {
+	if (isAidlServiceVersionAtLeast(3) && isSdkLevelAtLeast(__ANDROID_API_V__)) {
 		P2pDeviceFoundEventParams params;
 		params.srcAddress = macAddrToArray(addr);
 		params.p2pDeviceAddress = macAddrToArray(info->p2p_device_addr);
@@ -1607,7 +1616,7 @@ void AidlManager::notifyP2pProvisionDiscovery(
 	}
 	bool aidl_is_request = (request == 1);
 
-	if (isAidlServiceVersionAtLeast(3)) {
+	if (isAidlServiceVersionAtLeast(3) && isSdkLevelAtLeast(__ANDROID_API_V__)) {
 		P2pProvisionDiscoveryCompletedEventParams params;
 		params.p2pDeviceAddress =  macAddrToArray(dev_addr);
 		params.isRequest = aidl_is_request;
@@ -1663,7 +1672,7 @@ void AidlManager::notifyApStaAuthorized(
 	if (!wpa_s)
 		return;
 
-	if (isAidlServiceVersionAtLeast(3)) {
+	if (isAidlServiceVersionAtLeast(3) && isSdkLevelAtLeast(__ANDROID_API_V__)) {
 		P2pPeerClientJoinedEventParams params;
 		params.groupInterfaceName = misc_utils::charBufToString(wpa_group_s->ifname);
 		params.clientInterfaceAddress = macAddrToArray(sta);
@@ -1699,7 +1708,7 @@ void AidlManager::notifyApStaDeauthorized(
 	if (!wpa_s)
 		return;
 
-	if (isAidlServiceVersionAtLeast(3)) {
+	if (isAidlServiceVersionAtLeast(3) && isSdkLevelAtLeast(__ANDROID_API_V__)) {
 		P2pPeerClientDisconnectedEventParams params;
 		params.groupInterfaceName = misc_utils::charBufToString(wpa_group_s->ifname);
 		params.clientInterfaceAddress = macAddrToArray(sta);
