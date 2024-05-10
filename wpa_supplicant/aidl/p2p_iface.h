@@ -172,6 +172,12 @@ public:
 	::ndk::ScopedAStatus setVendorElements(
 		P2pFrameTypeMask in_frameTypeMask,
 		const std::vector<uint8_t>& in_vendorElemBytes) override;
+	::ndk::ScopedAStatus configureEapolIpAddressAllocationParams(
+		int32_t in_ipAddressGo, int32_t in_ipAddressMask,
+		int32_t in_ipAddressStart, int32_t in_ipAddressEnd) override;
+	::ndk::ScopedAStatus connectWithParams(
+		const P2pConnectInfo& in_connectInfo, std::string* _aidl_return) override;
+	::ndk::ScopedAStatus findWithParams(const P2pDiscoveryInfo& in_discoveryInfo) override;
 
 private:
 	// Corresponding worker functions for the AIDL methods.
@@ -292,6 +298,12 @@ private:
 	ndk::ScopedAStatus setVendorElementsInternal(
 		P2pFrameTypeMask frameTypeMask,
 		const std::vector<uint8_t>& vendorElemBytes);
+	::ndk::ScopedAStatus configureEapolIpAddressAllocationParamsInternal(
+		uint32_t ipAddressGo, uint32_t ipAddressMask,
+		uint32_t ipAddressStart, uint32_t ipAddressEnd);
+	std::pair<std::string, ndk::ScopedAStatus> connectWithParamsInternal(
+		const P2pConnectInfo& connectInfo);
+	ndk::ScopedAStatus findWithParamsInternal(const P2pDiscoveryInfo& discoveryInfo);
 
 	struct wpa_supplicant* retrieveIfacePtr();
 	struct wpa_supplicant* retrieveGroupIfacePtr(
