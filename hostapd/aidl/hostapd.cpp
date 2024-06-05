@@ -61,6 +61,24 @@ int band5Ghz = (int)BandMask::BAND_5_GHZ;
 int band6Ghz = (int)BandMask::BAND_6_GHZ;
 int band60Ghz = (int)BandMask::BAND_60_GHZ;
 
+int32_t aidl_client_version = 0;
+int32_t aidl_service_version = 0;
+
+/**
+ * Check that the AIDL service is running at least the expected version.
+ * Use to avoid the case where the AIDL interface version
+ * is greater than the version implemented by the service.
+ */
+inline int32_t isAidlServiceVersionAtLeast(int32_t expected_version)
+{
+	return expected_version <= aidl_service_version;
+}
+
+inline int32_t isAidlClientVersionAtLeast(int32_t expected_version)
+{
+	return expected_version <= aidl_client_version;
+}
+
 #define MAX_PORTS 1024
 bool GetInterfacesInBridge(std::string br_name,
                            std::vector<std::string>* interfaces) {
@@ -294,6 +312,33 @@ bool validatePassphrase(int passphrase_len, int min_len, int max_len)
 	return true;
 }
 
+std::string getInterfaceMacAddress(const std::string& if_name)
+{
+	u8 addr[ETH_ALEN] = {};
+	struct ifreq ifr;
+	std::string mac_addr;
+
+	android::base::unique_fd sock(socket(PF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0));
+	if (sock.get() < 0) {
+		wpa_printf(MSG_ERROR, "Failed to create sock (%s) in %s",
+			strerror(errno), __FUNCTION__);
+		return "";
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+	strlcpy(ifr.ifr_name, if_name.c_str(), IFNAMSIZ);
+	if (ioctl(sock.get(), SIOCGIFHWADDR, &ifr) < 0) {
+		wpa_printf(MSG_ERROR, "Could not get interface %s hwaddr: %s",
+			   if_name.c_str(), strerror(errno));
+		return "";
+	}
+
+	memcpy(addr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
+	mac_addr = StringPrintf("" MACSTR, MAC2STR(addr));
+
+	return mac_addr;
+}
+
 std::string CreateHostapdConfig(
 	const IfaceParams& iface_params,
 	const ChannelParams& channelParams,
@@ -373,23 +418,46 @@ std::string CreateHostapdConfig(
 				WPA2_PSK_PASSPHRASE_MAX_LEN_IN_BYTES))) {
 			return "";
 		}
-		encryption_config_as_string = StringPrintf(
-			"wpa=2\n"
-			"rsn_pairwise=%s\n"
-			"wpa_key_mgmt=%s\n"
-			"ieee80211w=1\n"
-			"sae_require_mfp=1\n"
-			"wpa_passphrase=%s\n"
-			"sae_password=%s",
-			is_60Ghz_band_only ? "GCMP" : "CCMP",
+		// WPA3 transition mode or SAE+WPA_PSK key management(AKM) is not allowed in 6GHz.
+		// Auto-convert any such configurations to SAE.
+		if ((band & band6Ghz) != 0) {
+			wpa_printf(MSG_INFO, "WPA3_SAE_TRANSITION configured in 6GHz band."
+				   "Enable only SAE in key_mgmt");
+			encryption_config_as_string = StringPrintf(
+				"wpa=2\n"
+				"rsn_pairwise=CCMP\n"
+				"wpa_key_mgmt=%s\n"
+				"ieee80211w=2\n"
+				"sae_require_mfp=2\n"
+				"sae_pwe=%d\n"
+				"sae_password=%s",
 #ifdef CONFIG_IEEE80211BE
-			iface_params.hwModeParams.enable80211BE ?
-			    "WPA-PSK SAE SAE-EXT-KEY" : "WPA-PSK SAE",
+				iface_params.hwModeParams.enable80211BE ?
+					"SAE SAE-EXT-KEY" : "SAE",
 #else
-			"WPA-PSK SAE",
+					"SAE",
 #endif
-			nw_params.passphrase.c_str(),
-			nw_params.passphrase.c_str());
+				is_6Ghz_band_only ? 1 : 2,
+				nw_params.passphrase.c_str());
+		} else {
+			encryption_config_as_string = StringPrintf(
+				"wpa=2\n"
+				"rsn_pairwise=%s\n"
+				"wpa_key_mgmt=%s\n"
+				"ieee80211w=1\n"
+				"sae_require_mfp=1\n"
+				"wpa_passphrase=%s\n"
+				"sae_password=%s",
+				is_60Ghz_band_only ? "GCMP" : "CCMP",
+#ifdef CONFIG_IEEE80211BE
+				iface_params.hwModeParams.enable80211BE ?
+					"WPA-PSK SAE SAE-EXT-KEY" : "WPA-PSK SAE",
+#else
+					"WPA-PSK SAE",
+#endif
+				nw_params.passphrase.c_str(),
+				nw_params.passphrase.c_str());
+                }
 		break;
 	case EncryptionType::WPA3_SAE:
 		if (!validatePassphrase(nw_params.passphrase.size(), 1, -1)) {
@@ -518,64 +586,115 @@ std::string CreateHostapdConfig(
 	std::string eht_params_as_string;
 #ifdef CONFIG_IEEE80211BE
 	if (iface_params.hwModeParams.enable80211BE && !is_60Ghz_used) {
-		eht_params_as_string = "ieee80211be=1";
+		eht_params_as_string = "ieee80211be=1\n";
+		if (isAidlServiceVersionAtLeast(2) && isAidlClientVersionAtLeast(2)) {
+			std::string interface_mac_addr = getInterfaceMacAddress(iface_params.name);
+			if (interface_mac_addr.empty()) {
+				wpa_printf(MSG_ERROR,
+				    "Unable to set interface mac address as bssid for 11BE SAP");
+				return "";
+			}
+			eht_params_as_string += StringPrintf(
+				"bssid=%s\n"
+				"mld_ap=1",
+				interface_mac_addr.c_str());
+		}
 		/* TODO set eht_su_beamformer, eht_su_beamformee, eht_mu_beamformer */
 	} else {
 		eht_params_as_string = "ieee80211be=0";
 	}
 #endif /* CONFIG_IEEE80211BE */
 
-	std::string ht_cap_vht_oper_he_oper_chwidth_as_string;
+	std::string ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string;
 	switch (iface_params.hwModeParams.maximumChannelBandwidth) {
 	case ChannelBandwidth::BANDWIDTH_20:
-		ht_cap_vht_oper_he_oper_chwidth_as_string = StringPrintf(
+		ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string = StringPrintf(
+#ifdef CONFIG_IEEE80211BE
+			"eht_oper_chwidth=0\n"
+#endif /* CONFIG_IEEE80211BE */
 #ifdef CONFIG_IEEE80211AX
 			"he_oper_chwidth=0\n"
 #endif
-			"vht_oper_chwidth=0");
+			"vht_oper_chwidth=0\n"
+			"%s", (band & band6Ghz) ? "op_class=131" : "");
 		break;
 	case ChannelBandwidth::BANDWIDTH_40:
-		ht_cap_vht_oper_he_oper_chwidth_as_string = StringPrintf(
+		ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string = StringPrintf(
 			"ht_capab=[HT40+]\n"
+#ifdef CONFIG_IEEE80211BE
+			"eht_oper_chwidth=0\n"
+#endif /* CONFIG_IEEE80211BE */
 #ifdef CONFIG_IEEE80211AX
 			"he_oper_chwidth=0\n"
 #endif
-			"vht_oper_chwidth=0");
+			"vht_oper_chwidth=0\n"
+			"%s", (band & band6Ghz) ? "op_class=132" : "");
 		break;
 	case ChannelBandwidth::BANDWIDTH_80:
-		ht_cap_vht_oper_he_oper_chwidth_as_string = StringPrintf(
+		ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string = StringPrintf(
 			"ht_capab=[HT40+]\n"
+#ifdef CONFIG_IEEE80211BE
+			"eht_oper_chwidth=%d\n"
+#endif /* CONFIG_IEEE80211BE */
 #ifdef CONFIG_IEEE80211AX
 			"he_oper_chwidth=%d\n"
 #endif
-			"vht_oper_chwidth=%d",
+			"vht_oper_chwidth=%d\n"
+			"%s",
+#ifdef CONFIG_IEEE80211BE
+			(iface_params.hwModeParams.enable80211BE && !is_60Ghz_used) ? 1 : 0,
+#endif
 #ifdef CONFIG_IEEE80211AX
 			(iface_params.hwModeParams.enable80211AX && !is_60Ghz_used) ? 1 : 0,
 #endif
-			iface_params.hwModeParams.enable80211AC ? 1 : 0);
+			iface_params.hwModeParams.enable80211AC ? 1 : 0,
+			(band & band6Ghz) ? "op_class=133" : "");
 		break;
 	case ChannelBandwidth::BANDWIDTH_160:
-		ht_cap_vht_oper_he_oper_chwidth_as_string = StringPrintf(
+		ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string = StringPrintf(
 			"ht_capab=[HT40+]\n"
+#ifdef CONFIG_IEEE80211BE
+			"eht_oper_chwidth=%d\n"
+#endif /* CONFIG_IEEE80211BE */
 #ifdef CONFIG_IEEE80211AX
 			"he_oper_chwidth=%d\n"
 #endif
-			"vht_oper_chwidth=%d",
+			"vht_oper_chwidth=%d\n"
+			"%s",
+#ifdef CONFIG_IEEE80211BE
+			(iface_params.hwModeParams.enable80211BE && !is_60Ghz_used) ? 2 : 0,
+#endif
 #ifdef CONFIG_IEEE80211AX
 			(iface_params.hwModeParams.enable80211AX && !is_60Ghz_used) ? 2 : 0,
 #endif
-			iface_params.hwModeParams.enable80211AC ? 2 : 0);
+			iface_params.hwModeParams.enable80211AC ? 2 : 0,
+			(band & band6Ghz) ? "op_class=134" : "");
 		break;
 	default:
 		if (!is_2Ghz_band_only && !is_60Ghz_used) {
 			if (iface_params.hwModeParams.enable80211AC) {
-				ht_cap_vht_oper_he_oper_chwidth_as_string =
+				ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string =
 					"ht_capab=[HT40+]\n"
 					"vht_oper_chwidth=1\n";
 			}
+			if (band & band6Ghz) {
+#ifdef CONFIG_IEEE80211BE
+				if (iface_params.hwModeParams.enable80211BE)
+					ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string += "op_class=137\n";
+				else
+					ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string += "op_class=134\n";
+#else /* CONFIG_IEEE80211BE */
+				ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string += "op_class=134\n";
+#endif /* CONFIG_IEEE80211BE */
+			}
 #ifdef CONFIG_IEEE80211AX
 			if (iface_params.hwModeParams.enable80211AX) {
-				ht_cap_vht_oper_he_oper_chwidth_as_string += "he_oper_chwidth=1";
+				ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string += "he_oper_chwidth=1\n";
+			}
+#endif
+#ifdef CONFIG_IEEE80211BE
+			if (iface_params.hwModeParams.enable80211BE) {
+				ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string += "eht_oper_chwidth=1";
 			}
 #endif
 		}
@@ -649,7 +768,7 @@ std::string CreateHostapdConfig(
 		iface_params.hwModeParams.enable80211AC ? 1 : 0,
 		he_params_as_string.c_str(),
 		eht_params_as_string.c_str(),
-		hw_mode_as_string.c_str(), ht_cap_vht_oper_he_oper_chwidth_as_string.c_str(),
+		hw_mode_as_string.c_str(), ht_cap_vht_oper_he_oper_eht_oper_chwidth_as_string.c_str(),
 		nw_params.isHidden ? 1 : 0,
 #ifdef CONFIG_INTERWORKING
 		access_network_params_as_string.c_str(),
@@ -765,7 +884,7 @@ void onAsyncSetupCompleteCb(void* ctx)
 std::function<void(struct hostapd_data*, const u8 *mac_addr, int authorized,
 		const u8 *p2p_dev_addr)> on_sta_authorized_internal_callback;
 void onAsyncStaAuthorizedCb(void* ctx, const u8 *mac_addr, int authorized,
-		const u8 *p2p_dev_addr)
+		const u8 *p2p_dev_addr, const u8 *ip)
 {
 	struct hostapd_data* iface_hapd = (struct hostapd_data*)ctx;
 	if (on_sta_authorized_internal_callback) {
@@ -989,9 +1108,13 @@ std::vector<uint8_t>  generateRandomOweSsid()
 				// Invoke the failure callback on all registered
 				// clients.
 				for (const auto& callback : callbacks_) {
-					callback->onFailure(strlen(iface_hapd->conf->bridge) > 0 ?
+					auto status = callback->onFailure(
+						strlen(iface_hapd->conf->bridge) > 0 ?
 						iface_hapd->conf->bridge : iface_hapd->conf->iface,
 							    iface_hapd->conf->iface);
+					if (!status.isOk()) {
+						wpa_printf(MSG_ERROR, "Failed to invoke onFailure");
+					}
 				}
 			}
 		};
@@ -1010,7 +1133,10 @@ std::vector<uint8_t>  generateRandomOweSsid()
 		info.clientAddress.assign(mac_addr, mac_addr + ETH_ALEN);
 		info.isConnected = authorized;
 		for (const auto &callback : callbacks_) {
-			callback->onConnectedClientsChanged(info);
+			auto status = callback->onConnectedClientsChanged(info);
+			if (!status.isOk()) {
+				wpa_printf(MSG_ERROR, "Failed to invoke onConnectedClientsChanged");
+			}
 		}
 		};
 
@@ -1034,16 +1160,23 @@ std::vector<uint8_t>  generateRandomOweSsid()
 			info.apIfaceInstanceMacAddress.assign(iface_hapd->own_addr,
 				iface_hapd->own_addr + ETH_ALEN);
 			for (const auto &callback : callbacks_) {
-				callback->onApInstanceInfoChanged(info);
+				auto status = callback->onApInstanceInfoChanged(info);
+				if (!status.isOk()) {
+					wpa_printf(MSG_ERROR,
+						   "Failed to invoke onApInstanceInfoChanged");
+				}
 			}
 		} else if (os_strncmp(txt, AP_EVENT_DISABLED, strlen(AP_EVENT_DISABLED)) == 0
                            || os_strncmp(txt, INTERFACE_DISABLED, strlen(INTERFACE_DISABLED)) == 0)
 		{
 			// Invoke the failure callback on all registered clients.
 			for (const auto& callback : callbacks_) {
-				callback->onFailure(strlen(iface_hapd->conf->bridge) > 0 ?
+				auto status = callback->onFailure(strlen(iface_hapd->conf->bridge) > 0 ?
 					iface_hapd->conf->bridge : iface_hapd->conf->iface,
 						    iface_hapd->conf->iface);
+				if (!status.isOk()) {
+					wpa_printf(MSG_ERROR, "Failed to invoke onFailure");
+				}
 			}
 		}
 	};
@@ -1107,6 +1240,14 @@ std::vector<uint8_t>  generateRandomOweSsid()
 		return createStatus(HostapdStatusCode::FAILURE_UNKNOWN);
 	}
 	callbacks_.push_back(callback);
+	if (aidl_service_version == 0) {
+	    aidl_service_version = Hostapd::version;
+	    wpa_printf(MSG_INFO, "AIDL service version: %d", aidl_service_version);
+	}
+	if (aidl_client_version == 0) {
+	    callback->getInterfaceVersion(&aidl_client_version);
+	    wpa_printf(MSG_INFO, "AIDL client version: %d", aidl_client_version);
+	}
 	return ndk::ScopedAStatus::ok();
 }
 

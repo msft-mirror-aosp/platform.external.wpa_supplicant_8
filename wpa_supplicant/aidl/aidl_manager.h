@@ -116,13 +116,13 @@ public:
 	void notifyP2pProvisionDiscovery(
 		struct wpa_supplicant *wpa_s, const u8 *dev_addr, int request,
 		enum p2p_prov_disc_status status, u16 config_methods,
-		unsigned int generated_pin);
+		unsigned int generated_pin, const char *group_ifname);
 	void notifyP2pSdResponse(
 		struct wpa_supplicant *wpa_s, const u8 *sa, u16 update_indic,
 		const u8 *tlvs, size_t tlvs_len);
 	void notifyApStaAuthorized(
 		struct wpa_supplicant *wpa_s, const u8 *sta,
-		const u8 *p2p_dev_addr);
+		const u8 *p2p_dev_addr, const u8 *ip);
 	void notifyApStaDeauthorized(
 		struct wpa_supplicant *wpa_s, const u8 *sta,
 		const u8 *p2p_dev_addr);
@@ -167,8 +167,12 @@ public:
 	ssize_t listAliases(const char *prefix, char ***aliases);
 	void notifyQosPolicyScsResponse(struct wpa_supplicant *wpa_s,
 			unsigned int count, int **scs_resp);
+	void notifyMloLinksInfoChanged(struct wpa_supplicant *wpa_s,
+				       enum mlo_info_change_reason reason);
 
 	// Methods called from aidl objects.
+	int32_t isAidlServiceVersionAtLeast(int32_t expected_version);
+	int32_t isAidlClientVersionAtLeast(int32_t expected_version);
 	void notifyExtRadioWorkStart(struct wpa_supplicant *wpa_s, uint32_t id);
 	void notifyExtRadioWorkTimeout(
 		struct wpa_supplicant *wpa_s, uint32_t id);

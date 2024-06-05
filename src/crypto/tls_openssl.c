@@ -201,6 +201,7 @@ struct tls_connection {
 
 static struct tls_context *tls_global = NULL;
 static tls_get_certificate_cb certificate_callback_global = NULL;
+static tls_openssl_failure_cb openssl_failure_callback_global = NULL;
 
 #ifdef ANDROID
 #include <openssl/pem.h>
@@ -1028,6 +1029,26 @@ void * tls_init(const struct tls_config *conf)
 	SSL_CTX *ssl;
 	struct tls_context *context;
 	const char *ciphers;
+#ifndef OPENSSL_NO_ENGINE
+#ifdef CONFIG_OPENSC_ENGINE_PATH
+	char const * const opensc_engine_path = CONFIG_OPENSC_ENGINE_PATH;
+#else /* CONFIG_OPENSC_ENGINE_PATH */
+	char const * const opensc_engine_path =
+		conf ? conf->opensc_engine_path : NULL;
+#endif /* CONFIG_OPENSC_ENGINE_PATH */
+#ifdef CONFIG_PKCS11_ENGINE_PATH
+	char const * const pkcs11_engine_path = CONFIG_PKCS11_ENGINE_PATH;
+#else /* CONFIG_PKCS11_ENGINE_PATH */
+	char const * const pkcs11_engine_path =
+		conf ? conf->pkcs11_engine_path : NULL;
+#endif /* CONFIG_PKCS11_ENGINE_PATH */
+#ifdef CONFIG_PKCS11_MODULE_PATH
+	char const * const pkcs11_module_path = CONFIG_PKCS11_MODULE_PATH;
+#else /* CONFIG_PKCS11_MODULE_PATH */
+	char const * const pkcs11_module_path =
+		conf ? conf->pkcs11_module_path : NULL;
+#endif /* CONFIG_PKCS11_MODULE_PATH */
+#endif /* OPENSSL_NO_ENGINE */
 
 	if (tls_openssl_ref_count == 0) {
 		void openssl_load_legacy_provider(void);
@@ -1170,12 +1191,10 @@ void * tls_init(const struct tls_config *conf)
 	wpa_printf(MSG_DEBUG, "ENGINE: Loading builtin engines");
 	ENGINE_load_builtin_engines();
 
-	if (conf &&
-	    (conf->opensc_engine_path || conf->pkcs11_engine_path ||
-	     conf->pkcs11_module_path)) {
-		if (tls_engine_load_dynamic_opensc(conf->opensc_engine_path) ||
-		    tls_engine_load_dynamic_pkcs11(conf->pkcs11_engine_path,
-						   conf->pkcs11_module_path)) {
+	if (opensc_engine_path || pkcs11_engine_path || pkcs11_module_path) {
+		if (tls_engine_load_dynamic_opensc(opensc_engine_path) ||
+		    tls_engine_load_dynamic_pkcs11(pkcs11_engine_path,
+						   pkcs11_module_path)) {
 			tls_deinit(data);
 			return NULL;
 		}
@@ -2634,9 +2653,19 @@ static int tls_verify_cb(int preverify_ok, X509_STORE_CTX *x509_ctx)
 		if (chain)
 			sk_X509_pop_free(chain, X509_free);
 
-		wpa_printf(MSG_WARNING, "TLS: Certificate verification failed,"
-			   " error %d (%s) depth %d for '%s'", err, err_str,
-			   depth, buf);
+		char *format_str = "TLS: Certificate verification failed,"
+			   " error %d (%s) depth %d for '%s'";
+		int msg_len = snprintf(NULL, 0, format_str, err, err_str, depth, buf) + 1;
+		char *msg = os_malloc(msg_len);
+		snprintf(msg, msg_len, format_str, err, err_str, depth, buf);
+
+		wpa_printf(MSG_WARNING, "%s", msg);
+		if (conn != NULL && conn->context != NULL
+				&& openssl_failure_callback_global != NULL) {
+			(*openssl_failure_callback_global)(conn->context->cb_ctx, msg);
+		}
+		os_free(msg);
+
 		openssl_tls_fail_event(conn, err_cert, err, depth, buf,
 				       err_str, TLS_FAIL_UNSPECIFIED);
 		return preverify_ok;
@@ -6047,4 +6076,9 @@ bool tls_connection_get_own_cert_used(struct tls_connection *conn)
 void tls_register_cert_callback(tls_get_certificate_cb cb)
 {
 	certificate_callback_global = cb;
+}
+
+void tls_register_openssl_failure_callback(tls_openssl_failure_cb cb)
+{
+	openssl_failure_callback_global = cb;
 }
