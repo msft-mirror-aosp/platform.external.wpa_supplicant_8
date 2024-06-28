@@ -114,15 +114,12 @@ static void ieee802_1x_set_authorized(struct hostapd_data *hapd,
 				      bool authorized, bool mld)
 {
 	int res;
-	bool update;
 
 	if (sta->flags & WLAN_STA_PREAUTH)
 		return;
 
-	update = ap_sta_set_authorized_flag(hapd, sta, authorized);
+	ap_sta_set_authorized(hapd, sta, authorized);
 	res = hostapd_set_authorized(hapd, sta, authorized);
-	if (update)
-		ap_sta_set_authorized_event(hapd, sta, authorized);
 	hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE8021X,
 		       HOSTAPD_LEVEL_DEBUG, "%sauthorizing port",
 		       authorized ? "" : "un");

@@ -2674,7 +2674,7 @@ interworking_match_anqp_info(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 			continue;
 		if (!(other->flags & WPA_BSS_ANQP_FETCH_TRIED))
 			continue;
-		if (!ether_addr_equal(bss->hessid, other->hessid))
+		if (os_memcmp(bss->hessid, other->hessid, ETH_ALEN) != 0)
 			continue;
 		if (bss->ssid_len != other->ssid_len ||
 		    os_memcmp(bss->ssid, other->ssid, bss->ssid_len) != 0)
@@ -3169,7 +3169,7 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 	 */
 	dl_list_for_each_reverse(tmp, &wpa_s->bss, struct wpa_bss, list) {
 		if (tmp == wpa_s->interworking_gas_bss &&
-		    ether_addr_equal(tmp->bssid, dst)) {
+		    os_memcmp(tmp->bssid, dst, ETH_ALEN) == 0) {
 			bss = tmp;
 			break;
 		}

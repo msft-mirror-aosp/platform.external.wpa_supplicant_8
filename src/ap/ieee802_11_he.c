@@ -254,15 +254,16 @@ u8 * hostapd_eid_he_operation(struct hostapd_data *hapd, u8 *eid)
 			control = 3;
 		else
 			control = center_idx_to_bw_6ghz(seg0);
-
-		control |= hapd->iconf->he_6ghz_reg_pwr_type <<
-			HE_6GHZ_OPER_INFO_CTRL_REG_INFO_SHIFT;
-
+		if (hapd->iconf->he_6ghz_reg_pwr_type == 1)
+			control |= HE_6GHZ_STANDARD_POWER_AP <<
+				HE_6GHZ_OPER_INFO_CTRL_REG_INFO_SHIFT;
+		else
+			control |= HE_6GHZ_INDOOR_AP <<
+				HE_6GHZ_OPER_INFO_CTRL_REG_INFO_SHIFT;
 		*pos++ = control;
 
 		/* Channel Center Freq Seg0/Seg1 */
-		if (oper_chwidth == CONF_OPER_CHWIDTH_160MHZ ||
-		    oper_chwidth == CONF_OPER_CHWIDTH_320MHZ) {
+		if (oper_chwidth == 2) {
 			/*
 			 * Seg 0 indicates the channel center frequency index of
 			 * the 160 MHz channel.
