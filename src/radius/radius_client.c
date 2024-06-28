@@ -1556,7 +1556,7 @@ void radius_client_flush_auth(struct radius_client_data *radius,
 	entry = radius->msgs;
 	while (entry) {
 		if (entry->msg_type == RADIUS_AUTH &&
-		    ether_addr_equal(entry->addr, addr)) {
+		    os_memcmp(entry->addr, addr, ETH_ALEN) == 0) {
 			hostapd_logger(radius->ctx, addr,
 				       HOSTAPD_MODULE_RADIUS,
 				       HOSTAPD_LEVEL_DEBUG,

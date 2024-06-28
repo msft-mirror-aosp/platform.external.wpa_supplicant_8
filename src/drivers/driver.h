@@ -949,8 +949,6 @@ struct wpa_driver_mld_params {
 		const u8 *bssid;
 		const u8 *ies;
 		size_t ies_len;
-		int error;
-		bool disabled;
 	} mld_links[MAX_NUM_MLD_LINKS];
 };
 
@@ -2717,7 +2715,6 @@ struct beacon_data {
  * @counter_offset_beacon: Offset to the count field in beacon's tail
  * @counter_offset_presp: Offset to the count field in probe resp.
  * @punct_bitmap - Preamble puncturing bitmap
- * @link_id: Link ID to determine the link for MLD; -1 for non-MLD
  */
 struct csa_settings {
 	u8 cs_count;
@@ -2731,7 +2728,6 @@ struct csa_settings {
 	u16 counter_offset_presp[2];
 
 	u16 punct_bitmap;
-	int link_id;
 };
 
 /**
@@ -2823,9 +2819,6 @@ struct drv_acs_params {
 
 	/* Indicates whether EHT is enabled */
 	bool eht_enabled;
-
-	/* Indicates the link if MLO case; -1 otherwise */
-	int link_id;
 };
 
 struct wpa_bss_trans_info {
@@ -6542,7 +6535,6 @@ union wpa_event_data {
 	/**
 	 * struct dfs_event - Data for radar detected events
 	 * @freq: Frequency of the channel in MHz
-	 * @link_id: If >= 0, Link ID of the MLO link
 	 */
 	struct dfs_event {
 		int freq;
@@ -6551,7 +6543,6 @@ union wpa_event_data {
 		enum chan_width chan_width;
 		int cf1;
 		int cf2;
-		int link_id;
 	} dfs_event;
 
 	/**
@@ -6570,22 +6561,11 @@ union wpa_event_data {
 	 * @initiator: Initiator of the regulatory change
 	 * @type: Regulatory change type
 	 * @alpha2: Country code (or "" if not available)
-	 * @beacon_hint_before: Data for frequency attributes before beacon hint
-	 *	event if initiator == REGDOM_BEACON_HINT
-	 * @beacon_hint_after: Data for frequency attributes after beacon hint
-	 *	event if initiator == REGDOM_BEACON_HINT
 	 */
 	struct channel_list_changed {
 		enum reg_change_initiator initiator;
 		enum reg_type type;
 		char alpha2[3];
-		struct frequency_attrs {
-			unsigned int freq;
-			unsigned int max_tx_power;
-			bool disabled;
-			bool no_ir;
-			bool radar;
-		} beacon_hint_before, beacon_hint_after;
 	} channel_list_changed;
 
 	/**
@@ -6628,9 +6608,7 @@ union wpa_event_data {
 	 * @ch_width: Selected Channel width by driver. Driver may choose to
 	 *	change hostapd configured ACS channel width due driver internal
 	 *	channel restrictions.
-	 * @hw_mode: Selected band (used with hw_mode=any)
-	 * @puncture_bitmap: Indicate the puncturing channels
-	 * @link_id: Indicate the link id if operating as AP MLD; -1 otherwise
+	 * hw_mode: Selected band (used with hw_mode=any)
 	 */
 	struct acs_selected_channels {
 		unsigned int pri_freq;
@@ -6641,7 +6619,6 @@ union wpa_event_data {
 		u16 ch_width;
 		enum hostapd_hw_mode hw_mode;
 		u16 puncture_bitmap;
-		int link_id;
 	} acs_selected_channels;
 
 	/**
