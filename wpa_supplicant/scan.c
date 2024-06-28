@@ -698,7 +698,10 @@ static struct wpabuf * wpa_supplicant_ml_probe_ie(int mld_id, u16 links)
 	else
 		wpa_printf(MSG_DEBUG, "MLD: Probing links 0x%04x", links);
 
-	for_each_link(links, link_id) {
+	for (link_id = 0; link_id < MAX_NUM_MLD_LINKS; link_id++) {
+		if (!(links & BIT(link_id)))
+			continue;
+
 		wpabuf_put_u8(extra_ie, EHT_ML_SUB_ELEM_PER_STA_PROFILE);
 
 		/* Subelement length includes only the control */
@@ -2603,8 +2606,8 @@ int wpa_supplicant_filter_bssid_match(struct wpa_supplicant *wpa_s,
 }
 
 
-static void filter_scan_res(struct wpa_supplicant *wpa_s,
-			    struct wpa_scan_results *res)
+void filter_scan_res(struct wpa_supplicant *wpa_s,
+		     struct wpa_scan_results *res)
 {
 	size_t i, j;
 
@@ -3166,7 +3169,6 @@ void scan_est_throughput(struct wpa_supplicant *wpa_s,
  * @wpa_s: Pointer to wpa_supplicant data
  * @info: Information about what was scanned or %NULL if not available
  * @new_scan: Whether a new scan was performed
- * @bssid: Return BSS entries only for a single BSSID, %NULL for all
  * Returns: Scan results, %NULL on failure
  *
  * This function request the current scan results from the driver and updates
@@ -3175,14 +3177,13 @@ void scan_est_throughput(struct wpa_supplicant *wpa_s,
  */
 struct wpa_scan_results *
 wpa_supplicant_get_scan_results(struct wpa_supplicant *wpa_s,
-				struct scan_info *info, int new_scan,
-				const u8 *bssid)
+				struct scan_info *info, int new_scan)
 {
 	struct wpa_scan_results *scan_res;
 	size_t i;
 	int (*compar)(const void *, const void *) = wpa_scan_result_compar;
 
-	scan_res = wpa_drv_get_scan_results(wpa_s, bssid);
+	scan_res = wpa_drv_get_scan_results2(wpa_s);
 	if (scan_res == NULL) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Failed to get scan results");
 		return NULL;
@@ -3240,7 +3241,6 @@ wpa_supplicant_get_scan_results(struct wpa_supplicant *wpa_s,
 /**
  * wpa_supplicant_update_scan_results - Update scan results from the driver
  * @wpa_s: Pointer to wpa_supplicant data
- * @bssid: Update BSS entries only for a single BSSID, %NULL for all
  * Returns: 0 on success, -1 on failure
  *
  * This function updates the BSS table within wpa_supplicant based on the
@@ -3250,11 +3250,10 @@ wpa_supplicant_get_scan_results(struct wpa_supplicant *wpa_s,
  * needed information to complete the connection (e.g., to perform validation
  * steps in 4-way handshake).
  */
-int wpa_supplicant_update_scan_results(struct wpa_supplicant *wpa_s,
-				       const u8 *bssid)
+int wpa_supplicant_update_scan_results(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_scan_results *scan_res;
-	scan_res = wpa_supplicant_get_scan_results(wpa_s, NULL, 0, bssid);
+	scan_res = wpa_supplicant_get_scan_results(wpa_s, NULL, 0);
 	if (scan_res == NULL)
 		return -1;
 	wpa_scan_results_free(scan_res);
@@ -3351,7 +3350,6 @@ wpa_scan_clone_params(const struct wpa_driver_scan_params *src)
 	params->duration = src->duration;
 	params->duration_mandatory = src->duration_mandatory;
 	params->oce_scan = src->oce_scan;
-	params->link_id = src->link_id;
 
 	if (src->sched_scan_plans_num > 0) {
 		params->sched_scan_plans =

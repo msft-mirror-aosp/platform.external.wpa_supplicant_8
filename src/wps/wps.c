@@ -146,7 +146,6 @@ struct wps_data * wps_init(const struct wps_config *cfg)
 	}
 
 	data->multi_ap_backhaul_sta = cfg->multi_ap_backhaul_sta;
-	data->multi_ap_profile = cfg->multi_ap_profile;
 
 	return data;
 }

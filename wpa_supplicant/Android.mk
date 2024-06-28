@@ -139,8 +139,6 @@ OBJS += src/utils/wpabuf.c
 OBJS += src/utils/bitfield.c
 OBJS += src/utils/ip_addr.c
 OBJS += src/utils/crc32.c
-OBJS += src/common/ptksa_cache.c
-OBJS += src/rsn_supp/pmksa_cache.c
 OBJS += twt.c
 OBJS_p = wpa_passphrase.c
 OBJS_p += src/utils/common.c
@@ -381,6 +379,7 @@ endif
 ifndef CONFIG_NO_WPA
 OBJS += src/rsn_supp/wpa.c
 OBJS += src/rsn_supp/preauth.c
+OBJS += src/rsn_supp/pmksa_cache.c
 OBJS += src/rsn_supp/wpa_ie.c
 OBJS += src/common/wpa_common.c
 NEED_AES=y
@@ -433,8 +432,8 @@ NEED_HMAC_SHA256_KDF=y
 NEED_HMAC_SHA384_KDF=y
 NEED_SHA256=y
 NEED_SHA384=y
+OBJS += src/common/ptksa_cache.c
 OBJS += src/pasn/pasn_initiator.c
-OBJS += src/pasn/pasn_common.c
 OBJS += pasn_supplicant.c
 endif
 
@@ -1847,9 +1846,8 @@ endif
 
 PASNOBJS += src/common/ptksa_cache.c
 
-PASNOBJS += src/rsn_supp/pmksa_cache.c
-
 ifndef CONFIG_NO_WPA
+PASNOBJS += src/rsn_supp/pmksa_cache.c
 PASNOBJS += src/rsn_supp/wpa_ie.c
 endif
 
@@ -1935,7 +1933,6 @@ endif
 
 PASNOBJS += src/pasn/pasn_initiator.c
 PASNOBJS += src/pasn/pasn_responder.c
-PASNOBJS += src/pasn/pasn_common.c
 
 ########################
 

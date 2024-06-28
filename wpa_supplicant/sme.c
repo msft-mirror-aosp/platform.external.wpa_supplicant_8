@@ -182,7 +182,7 @@ static struct wpabuf * sme_auth_build_sae_commit(struct wpa_supplicant *wpa_s,
 	if (!bss) {
 		wpa_printf(MSG_DEBUG,
 			   "SAE: BSS not available, update scan result to get BSS");
-		wpa_supplicant_update_scan_results(wpa_s, bssid);
+		wpa_supplicant_update_scan_results(wpa_s);
 		bss = wpa_bss_get_bssid_latest(wpa_s, bssid);
 	}
 	if (bss) {
@@ -405,7 +405,10 @@ static struct wpa_bss * wpas_ml_connect_pref(struct wpa_supplicant *wpa_s,
 		return bss;
 
 	if (!is_zero_ether_addr(wpa_s->conf->mld_connect_bssid_pref)) {
-		for_each_link(wpa_s->valid_links, i) {
+		for (i = 0; i < MAX_NUM_MLD_LINKS; i++) {
+			if (!(wpa_s->valid_links & BIT(i)))
+				continue;
+
 			if (wpa_s->mlo_assoc_link_id == i)
 				continue;
 
@@ -436,7 +439,10 @@ static struct wpa_bss * wpas_ml_connect_pref(struct wpa_supplicant *wpa_s,
 		return bss;
 	}
 
-	for_each_link(wpa_s->valid_links, i) {
+	for (i = 0; i < MAX_NUM_MLD_LINKS; i++) {
+		if (!(wpa_s->valid_links & BIT(i)))
+			continue;
+
 		if (wpa_s->mlo_assoc_link_id == i)
 			continue;
 
@@ -517,23 +523,21 @@ out:
 static void wpas_sme_set_mlo_links(struct wpa_supplicant *wpa_s,
 				   struct wpa_bss *bss)
 {
-	u8 i;
+	int i;
 
 	wpa_s->valid_links = 0;
-	wpa_s->mlo_assoc_link_id = bss->mld_link_id;
 
-	for_each_link(bss->valid_links, i) {
+	for (i = 0; i < bss->n_mld_links; i++) {
+		u8 link_id = bss->mld_links[i].link_id;
 		const u8 *bssid = bss->mld_links[i].bssid;
 
-		wpa_s->valid_links |= BIT(i);
-		os_memcpy(wpa_s->links[i].bssid, bssid, ETH_ALEN);
-		wpa_s->links[i].freq = bss->mld_links[i].freq;
-		wpa_s->links[i].disabled = bss->mld_links[i].disabled;
-
-		if (bss->mld_link_id == i)
-			wpa_s->links[i].bss = bss;
-		else
-			wpa_s->links[i].bss = wpa_bss_get_bssid(wpa_s, bssid);
+		if (i == 0)
+			wpa_s->mlo_assoc_link_id = link_id;
+		wpa_s->valid_links |= BIT(link_id);
+		os_memcpy(wpa_s->links[link_id].bssid, bssid, ETH_ALEN);
+		wpa_s->links[link_id].freq = bss->mld_links[i].freq;
+		wpa_s->links[link_id].bss = wpa_bss_get_bssid(wpa_s, bssid);
+		wpa_s->links[link_id].disabled = bss->mld_links[i].disabled;
 	}
 }
 
@@ -574,7 +578,7 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	if ((wpa_s->drv_flags2 & WPA_DRIVER_FLAGS2_MLO) &&
 	    !wpa_bss_parse_basic_ml_element(wpa_s, bss, wpa_s->ap_mld_addr,
 					    NULL, ssid, NULL) &&
-	    bss->valid_links) {
+	    bss->n_mld_links) {
 		wpa_printf(MSG_DEBUG, "MLD: In authentication");
 		wpas_sme_set_mlo_links(wpa_s, bss);
 
@@ -2412,16 +2416,12 @@ mscs_fail:
 
 	if (ssid && ssid->multi_ap_backhaul_sta) {
 		size_t multi_ap_ie_len;
-		struct multi_ap_params multi_ap = { 0 };
-
-		multi_ap.capability = MULTI_AP_BACKHAUL_STA;
-		multi_ap.profile = ssid->multi_ap_profile;
 
 		multi_ap_ie_len = add_multi_ap_ie(
 			wpa_s->sme.assoc_req_ie + wpa_s->sme.assoc_req_ie_len,
 			sizeof(wpa_s->sme.assoc_req_ie) -
 			wpa_s->sme.assoc_req_ie_len,
-			&multi_ap);
+			MULTI_AP_BACKHAUL_STA);
 		if (multi_ap_ie_len == 0) {
 			wpa_printf(MSG_ERROR,
 				   "Multi-AP: Failed to build Multi-AP IE");
@@ -2601,7 +2601,10 @@ mscs_fail:
 		params.mld_params.mld_addr = wpa_s->ap_mld_addr;
 		params.mld_params.valid_links = wpa_s->valid_links;
 		params.mld_params.assoc_link_id = wpa_s->mlo_assoc_link_id;
-		for_each_link(wpa_s->valid_links, i) {
+		for (i = 0; i < MAX_NUM_MLD_LINKS; i++) {
+			if (!(wpa_s->valid_links & BIT(i)))
+				continue;
+
 			params.mld_params.mld_links[i].bssid =
 				wpa_s->links[i].bssid;
 			params.mld_params.mld_links[i].freq =

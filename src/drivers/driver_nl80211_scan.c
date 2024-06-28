@@ -728,7 +728,7 @@ static int nl80211_scan_filtered(struct wpa_driver_nl80211_data *drv,
 
 static struct wpa_scan_res *
 nl80211_parse_bss_info(struct wpa_driver_nl80211_data *drv,
-		       struct nl_msg *msg, const u8 *bssid)
+		       struct nl_msg *msg)
 {
 	struct nlattr *tb[NL80211_ATTR_MAX + 1];
 	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
@@ -761,9 +761,6 @@ nl80211_parse_bss_info(struct wpa_driver_nl80211_data *drv,
 		return NULL;
 	if (nla_parse_nested(bss, NL80211_BSS_MAX, tb[NL80211_ATTR_BSS],
 			     bss_policy))
-		return NULL;
-	if (bssid && bss[NL80211_BSS_BSSID] &&
-	    !ether_addr_equal(bssid, nla_data(bss[NL80211_BSS_BSSID])))
 		return NULL;
 	if (bss[NL80211_BSS_INFORMATION_ELEMENTS]) {
 		ie = nla_data(bss[NL80211_BSS_INFORMATION_ELEMENTS]);
@@ -869,7 +866,6 @@ nl80211_parse_bss_info(struct wpa_driver_nl80211_data *drv,
 struct nl80211_bss_info_arg {
 	struct wpa_driver_nl80211_data *drv;
 	struct wpa_scan_results *res;
-	const u8 *bssid;
 };
 
 static int bss_info_handler(struct nl_msg *msg, void *arg)
@@ -879,7 +875,7 @@ static int bss_info_handler(struct nl_msg *msg, void *arg)
 	struct wpa_scan_res **tmp;
 	struct wpa_scan_res *r;
 
-	r = nl80211_parse_bss_info(_arg->drv, msg, _arg->bssid);
+	r = nl80211_parse_bss_info(_arg->drv, msg);
 	if (!r)
 		return NL_SKIP;
 
@@ -977,7 +973,7 @@ static void nl80211_update_scan_res_noise(struct wpa_scan_res *res,
 
 
 static struct wpa_scan_results *
-nl80211_get_scan_results(struct wpa_driver_nl80211_data *drv, const u8 *bssid)
+nl80211_get_scan_results(struct wpa_driver_nl80211_data *drv)
 {
 	struct nl_msg *msg;
 	struct wpa_scan_results *res;
@@ -997,7 +993,6 @@ try_again:
 
 	arg.drv = drv;
 	arg.res = res;
-	arg.bssid = bssid;
 	ret = send_and_recv_resp(drv, msg, bss_info_handler, &arg);
 	if (ret == -EAGAIN) {
 		count++;
@@ -1034,18 +1029,16 @@ try_again:
 
 /**
  * wpa_driver_nl80211_get_scan_results - Fetch the latest scan results
- * @priv: Pointer to private nl80211 data from wpa_driver_nl80211_init()
- * @bssid: Return results only for the specified BSSID, %NULL for all
+ * @priv: Pointer to private wext data from wpa_driver_nl80211_init()
  * Returns: Scan results on success, -1 on failure
  */
-struct wpa_scan_results * wpa_driver_nl80211_get_scan_results(void *priv,
-							      const u8 *bssid)
+struct wpa_scan_results * wpa_driver_nl80211_get_scan_results(void *priv)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct wpa_scan_results *res;
 
-	res = nl80211_get_scan_results(drv, bssid);
+	res = nl80211_get_scan_results(drv);
 	if (res)
 		wpa_driver_nl80211_check_bss_status(drv, res);
 	return res;
@@ -1062,7 +1055,7 @@ static int nl80211_dump_scan_handler(struct nl_msg *msg, void *arg)
 	struct nl80211_dump_scan_ctx *ctx = arg;
 	struct wpa_scan_res *r;
 
-	r = nl80211_parse_bss_info(ctx->drv, msg, NULL);
+	r = nl80211_parse_bss_info(ctx->drv, msg);
 	if (!r)
 		return NL_SKIP;
 	wpa_printf(MSG_DEBUG, "nl80211: %d " MACSTR " %d%s",
@@ -1274,11 +1267,6 @@ int wpa_driver_nl80211_vendor_scan(struct i802_bss *bss,
 			    params->bssid))
 			goto fail;
 	}
-
-	if (is_ap_interface(drv->nlmode) &&
-	    params->link_id != NL80211_DRV_LINK_ID_NA &&
-	    nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_SCAN_LINK_ID, params->link_id))
-		goto fail;
 
 	nla_nest_end(msg, attr);
 

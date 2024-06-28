@@ -678,7 +678,9 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	wpa_s->disallow_aps_ssid = NULL;
 
 	wnm_bss_keep_alive_deinit(wpa_s);
-	wnm_btm_reset(wpa_s);
+#ifdef CONFIG_WNM
+	wnm_deallocate_memory(wpa_s);
+#endif /* CONFIG_WNM */
 
 	ext_password_deinit(wpa_s->ext_pw);
 	wpa_s->ext_pw = NULL;
@@ -892,7 +894,7 @@ void wpa_supplicant_reset_bgscan(struct wpa_supplicant *wpa_s)
 			struct wpa_scan_results *scan_res;
 			wpa_s->bgscan_ssid = wpa_s->current_ssid;
 			scan_res = wpa_supplicant_get_scan_results(wpa_s, NULL,
-								   0, NULL);
+								   0);
 			if (scan_res) {
 				bgscan_notify_scan(wpa_s, scan_res);
 				wpa_scan_results_free(scan_res);
@@ -1078,10 +1080,6 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 
 	if (state == WPA_DISCONNECTED || state == WPA_INACTIVE)
 		wpa_supplicant_start_autoscan(wpa_s);
-
-	if (state == WPA_COMPLETED || state == WPA_INTERFACE_DISABLED ||
-	    state == WPA_INACTIVE)
-		wnm_btm_reset(wpa_s);
 
 #ifndef CONFIG_NO_WMM_AC
 	if (old_state >= WPA_ASSOCIATED && wpa_s->wpa_state < WPA_ASSOCIATED)
@@ -2524,7 +2522,6 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_NO_WMM_AC */
 #ifdef CONFIG_WNM
 	wpa_s->wnm_mode = 0;
-	wpa_s->wnm_target_bss = NULL;
 #endif /* CONFIG_WNM */
 	wpa_s->reassoc_same_bss = 0;
 	wpa_s->reassoc_same_ess = 0;
@@ -2922,8 +2919,7 @@ static void ibss_mesh_select_40mhz(struct wpa_supplicant *wpa_s,
 	if (obss_scan) {
 		struct wpa_scan_results *scan_res;
 
-		scan_res = wpa_supplicant_get_scan_results(wpa_s, NULL, 0,
-							   NULL);
+		scan_res = wpa_supplicant_get_scan_results(wpa_s, NULL, 0);
 		if (scan_res == NULL) {
 			/* Back to HT20 */
 			freq->sec_channel_offset = 0;
@@ -3087,7 +3083,7 @@ skip_80mhz:
 				    freq->sec_channel_offset,
 				    chwidth, seg0, seg1, vht_caps,
 				    &mode->he_capab[ieee80211_mode],
-				    &mode->eht_capab[ieee80211_mode], 0) != 0)
+				    &mode->eht_capab[ieee80211_mode]) != 0)
 		return false;
 
 	*freq = vht_freq;
@@ -3835,14 +3831,10 @@ mscs_end:
 
 	if (ssid->multi_ap_backhaul_sta) {
 		size_t multi_ap_ie_len;
-		struct multi_ap_params multi_ap = { 0 };
-
-		multi_ap.capability = MULTI_AP_BACKHAUL_STA;
-		multi_ap.profile = ssid->multi_ap_profile;
 
 		multi_ap_ie_len = add_multi_ap_ie(wpa_ie + wpa_ie_len,
 						  max_wpa_ie_len - wpa_ie_len,
-						  &multi_ap);
+						  MULTI_AP_BACKHAUL_STA);
 		if (multi_ap_ie_len == 0) {
 			wpa_printf(MSG_ERROR,
 				   "Multi-AP: Failed to build Multi-AP IE");
@@ -9181,7 +9173,8 @@ struct hostapd_hw_modes * get_mode(struct hostapd_hw_modes *modes,
 		if (modes[i].mode != mode ||
 		    !modes[i].num_channels || !modes[i].channels)
 			continue;
-		if (is_6ghz == modes[i].is_6ghz)
+		if ((!is_6ghz && !is_6ghz_freq(modes[i].channels[0].freq)) ||
+		    (is_6ghz && is_6ghz_freq(modes[i].channels[0].freq)))
 			return &modes[i];
 	}
 
@@ -9420,21 +9413,17 @@ int wpa_drv_signal_poll(struct wpa_supplicant *wpa_s,
 
 
 struct wpa_scan_results *
-wpa_drv_get_scan_results(struct wpa_supplicant *wpa_s, const u8 *bssid)
+wpa_drv_get_scan_results2(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_scan_results *scan_res;
 #ifdef CONFIG_TESTING_OPTIONS
 	size_t idx;
 #endif /* CONFIG_TESTING_OPTIONS */
 
-	if (wpa_s->driver->get_scan_results)
-		scan_res = wpa_s->driver->get_scan_results(wpa_s->drv_priv,
-							   bssid);
-	else if (wpa_s->driver->get_scan_results2)
-		scan_res = wpa_s->driver->get_scan_results2(wpa_s->drv_priv);
-	else
+	if (!wpa_s->driver->get_scan_results2)
 		return NULL;
 
+	scan_res = wpa_s->driver->get_scan_results2(wpa_s->drv_priv);
 
 #ifdef CONFIG_TESTING_OPTIONS
 	for (idx = 0; scan_res && idx < scan_res->num; idx++) {
@@ -9472,7 +9461,10 @@ bool wpas_ap_link_address(struct wpa_supplicant *wpa_s, const u8 *addr)
 	if (!wpa_s->valid_links)
 		return false;
 
-	for_each_link(wpa_s->valid_links, i) {
+	for (i = 0; i < MAX_NUM_MLD_LINKS; i++) {
+		if (!(wpa_s->valid_links & BIT(i)))
+			continue;
+
 		if (ether_addr_equal(wpa_s->links[i].bssid, addr))
 			return true;
 	}
