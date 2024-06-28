@@ -170,7 +170,6 @@ OBJS += src/utils/crc32.c
 OBJS += src/common/ieee802_11_common.c
 OBJS += src/common/wpa_common.c
 OBJS += src/common/hw_features_common.c
-OBJS += src/common/ptksa_cache.c
 
 OBJS += src/eapol_auth/eapol_auth_sm.c
 
@@ -615,6 +614,7 @@ NEED_HMAC_SHA256_KDF=y
 NEED_HMAC_SHA384_KDF=y
 NEED_SHA256=y
 NEED_SHA384=y
+OBJS += src/common/ptksa_cache.c
 endif
 
 ifdef CONFIG_EAP_IKEV2
@@ -665,11 +665,6 @@ endif
 
 ifdef CHAP
 OBJS += src/eap_common/chap.c
-endif
-
-ifdef CONFIG_RADIUS_TLS
-TLS_FUNCS=y
-L_CFLAGS += -DCONFIG_RADIUS_TLS
 endif
 
 ifdef TLS_FUNCS
@@ -1071,7 +1066,6 @@ OBJS += src/ap/wmm.c
 OBJS += src/ap/ap_list.c
 OBJS += src/ap/comeback_token.c
 OBJS += src/pasn/pasn_responder.c
-OBJS += src/pasn/pasn_common.c
 OBJS += src/ap/ieee802_11.c
 OBJS += src/ap/hw_features.c
 OBJS += src/ap/dfs.c

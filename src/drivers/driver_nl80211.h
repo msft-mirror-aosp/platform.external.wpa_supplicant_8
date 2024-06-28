@@ -55,6 +55,7 @@ struct nl80211_wiphy_data {
 struct i802_link {
 	unsigned int beacon_set:1;
 
+	s8 link_id;
 	int freq;
 	int bandwidth;
 	u8 addr[ETH_ALEN];
@@ -65,7 +66,7 @@ struct i802_bss {
 	struct wpa_driver_nl80211_data *drv;
 	struct i802_bss *next;
 
-	u16 valid_links;
+	size_t n_links;
 	struct i802_link links[MAX_NUM_MLD_LINKS];
 	struct i802_link *flink;
 
@@ -291,21 +292,6 @@ int send_and_recv(struct nl80211_global *global,
 		  void *ack_data,
 		  struct nl80211_err_info *err_info);
 
-// This function is not used in supplicant anymore. But keeping this wrapper
-// functions for libraries outside wpa_supplicant to build (For eg: lib_driver_cmd_XX)
-static inline int
-send_and_recv_msgs(struct wpa_driver_nl80211_data *drv,
-		   struct nl_msg *msg,
-		   int (*valid_handler)(struct nl_msg *, void *),
-		   void *valid_data,
-		   int (*ack_handler_custom)(struct nl_msg *, void *),
-		   void *ack_data)
-{
-	return send_and_recv(drv->global, drv->global->nl, msg,
-			     valid_handler, valid_data,
-			     ack_handler_custom, ack_data, NULL);
-}
-
 static inline int
 send_and_recv_cmd(struct wpa_driver_nl80211_data *drv,
 		  struct nl_msg *msg)
@@ -371,18 +357,6 @@ const char * nl80211_iftype_str(enum nl80211_iftype mode);
 void nl80211_restore_ap_mode(struct i802_bss *bss);
 struct i802_link * nl80211_get_link(struct i802_bss *bss, s8 link_id);
 
-static inline bool nl80211_link_valid(u16 links, s8 link_id)
-{
-	if (link_id < 0 || link_id >= MAX_NUM_MLD_LINKS)
-		return false;
-
-	if (links & BIT(link_id))
-		return true;
-
-	return false;
-}
-
-
 static inline bool
 nl80211_attr_supported(struct wpa_driver_nl80211_data *drv, unsigned int attr)
 {
@@ -420,8 +394,7 @@ int wpa_driver_nl80211_scan(struct i802_bss *bss,
 int wpa_driver_nl80211_sched_scan(void *priv,
 				  struct wpa_driver_scan_params *params);
 int wpa_driver_nl80211_stop_sched_scan(void *priv);
-struct wpa_scan_results * wpa_driver_nl80211_get_scan_results(void *priv,
-							      const u8 *bssid);
+struct wpa_scan_results * wpa_driver_nl80211_get_scan_results(void *priv);
 void nl80211_dump_scan(struct wpa_driver_nl80211_data *drv);
 int wpa_driver_nl80211_abort_scan(void *priv, u64 scan_cookie);
 int wpa_driver_nl80211_vendor_scan(struct i802_bss *bss,
