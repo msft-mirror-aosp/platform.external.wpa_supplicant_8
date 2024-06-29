@@ -199,15 +199,9 @@ static struct gas_query_pending *
 gas_query_get_pending(struct gas_query *gas, const u8 *addr, u8 dialog_token)
 {
 	struct gas_query_pending *q;
-	struct wpa_supplicant *wpa_s = gas->wpa_s;
-
 	dl_list_for_each(q, &gas->pending, struct gas_query_pending, list) {
-		if (ether_addr_equal(q->addr, addr) &&
+		if (os_memcmp(q->addr, addr, ETH_ALEN) == 0 &&
 		    q->dialog_token == dialog_token)
-			return q;
-		if (wpa_s->valid_links &&
-		    ether_addr_equal(wpa_s->ap_mld_addr, addr) &&
-		    wpas_ap_link_address(wpa_s, q->addr))
 			return q;
 	}
 	return NULL;
@@ -249,7 +243,7 @@ static void gas_query_tx_status(struct wpa_supplicant *wpa_s,
 	wpa_printf(MSG_DEBUG, "GAS: TX status: freq=%u dst=" MACSTR
 		   " result=%d query=%p dialog_token=%u dur=%d ms",
 		   freq, MAC2STR(dst), result, query, query->dialog_token, dur);
-	if (!ether_addr_equal(dst, query->addr)) {
+	if (os_memcmp(dst, query->addr, ETH_ALEN) != 0) {
 		wpa_printf(MSG_DEBUG, "GAS: TX status for unexpected destination");
 		return;
 	}
@@ -306,7 +300,7 @@ static int gas_query_tx(struct gas_query *gas, struct gas_query_pending *query,
 	    (!gas->wpa_s->conf->gas_address3 ||
 	     (gas->wpa_s->current_ssid &&
 	      gas->wpa_s->wpa_state >= WPA_ASSOCIATED &&
-	      ether_addr_equal(query->addr, gas->wpa_s->bssid))))
+	      os_memcmp(query->addr, gas->wpa_s->bssid, ETH_ALEN) == 0)))
 		bssid = query->addr;
 	else
 		bssid = wildcard_bssid;
@@ -674,7 +668,7 @@ static int gas_query_dialog_token_available(struct gas_query *gas,
 {
 	struct gas_query_pending *q;
 	dl_list_for_each(q, &gas->pending, struct gas_query_pending, list) {
-		if (ether_addr_equal(dst, q->addr) &&
+		if (os_memcmp(dst, q->addr, ETH_ALEN) == 0 &&
 		    dialog_token == q->dialog_token)
 			return 0;
 	}
