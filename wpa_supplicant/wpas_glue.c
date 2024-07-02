@@ -418,7 +418,7 @@ static int wpa_get_beacon_ie(struct wpa_supplicant *wpa_s)
 	const u8 *ie;
 
 	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
-		if (!ether_addr_equal(bss->bssid, wpa_s->bssid))
+		if (os_memcmp(bss->bssid, wpa_s->bssid, ETH_ALEN) != 0)
 			continue;
 		if (ssid == NULL ||
 		    ((bss->ssid_len == ssid->ssid_len &&
@@ -465,7 +465,7 @@ static int wpa_supplicant_get_beacon_ie(void *ctx)
 
 	/* No WPA/RSN IE found in the cached scan results. Try to get updated
 	 * scan results from the driver. */
-	if (wpa_supplicant_update_scan_results(wpa_s, wpa_s->bssid) < 0)
+	if (wpa_supplicant_update_scan_results(wpa_s) < 0)
 		return -1;
 
 	return wpa_get_beacon_ie(wpa_s);
