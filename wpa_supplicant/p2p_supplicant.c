@@ -1088,6 +1088,7 @@ static int wpas_p2p_group_delete(struct wpa_supplicant *wpa_s,
 		 * Likewise, we don't send out network removed signals for such
 		 * network objects.
 		 */
+		wpas_notify_network_removed(wpa_s, ssid);
 		wpa_config_remove_network(wpa_s->conf, id);
 		wpa_supplicant_clear_status(wpa_s);
 		wpa_supplicant_cancel_sched_scan(wpa_s);
@@ -2666,6 +2667,7 @@ done:
 				     wfd_dev_info_len, wfd_r2_dev_info,
 				     wfd_r2_dev_info_len, new_device);
 	os_free(wfd_dev_info);
+	os_free(wfd_r2_dev_info);
 }
 
 
@@ -2826,6 +2828,12 @@ static void wpas_stop_listen(void *ctx)
 		wpa_drv_probe_req_report(wpa_s, 0);
 
 	wpas_p2p_listen_work_done(wpa_s);
+
+	if (radio_work_pending(wpa_s, "p2p-listen")) {
+		wpa_printf(MSG_DEBUG,
+			   "P2P: p2p-listen is still pending - remove it");
+		radio_remove_works(wpa_s, "p2p-listen", 0);
+	}
 }
 
 
@@ -2904,7 +2912,7 @@ static void wpas_prov_disc_req(void *ctx, const u8 *peer, u16 config_methods,
 			wpa_printf(MSG_DEBUG, "P2P: Could not generate PIN");
 			wpas_notify_p2p_provision_discovery(
 				wpa_s, peer, 0 /* response */,
-				P2P_PROV_DISC_INFO_UNAVAILABLE, 0, 0);
+				P2P_PROV_DISC_INFO_UNAVAILABLE, 0, 0, NULL);
 			return;
 		}
 		wpas_prov_disc_local_display(wpa_s, peer, params,
@@ -2917,7 +2925,8 @@ static void wpas_prov_disc_req(void *ctx, const u8 *peer, u16 config_methods,
 
 	wpas_notify_p2p_provision_discovery(wpa_s, peer, 1 /* request */,
 					    P2P_PROV_DISC_SUCCESS,
-					    config_methods, generated_pin);
+					    config_methods, generated_pin,
+					    group ? group->ifname : NULL);
 }
 
 
@@ -2955,7 +2964,7 @@ static void wpas_prov_disc_resp(void *ctx, const u8 *peer, u16 config_methods)
 			wpa_printf(MSG_DEBUG, "P2P: Could not generate PIN");
 			wpas_notify_p2p_provision_discovery(
 				wpa_s, peer, 0 /* response */,
-				P2P_PROV_DISC_INFO_UNAVAILABLE, 0, 0);
+				P2P_PROV_DISC_INFO_UNAVAILABLE, 0, 0, NULL);
 			return;
 		}
 		wpas_prov_disc_local_display(wpa_s, peer, params,
@@ -2966,7 +2975,8 @@ static void wpas_prov_disc_resp(void *ctx, const u8 *peer, u16 config_methods)
 
 	wpas_notify_p2p_provision_discovery(wpa_s, peer, 0 /* response */,
 					    P2P_PROV_DISC_SUCCESS,
-					    config_methods, generated_pin);
+					    config_methods, generated_pin,
+					    NULL);
 }
 
 
@@ -3013,7 +3023,7 @@ static void wpas_prov_disc_fail(void *ctx, const u8 *peer,
 	}
 
 	wpas_notify_p2p_provision_discovery(wpa_s, peer, 0 /* response */,
-					    status, 0, 0);
+					    status, 0, 0, NULL);
 }
 
 
@@ -6321,7 +6331,7 @@ static int wpas_p2p_select_go_freq(struct wpa_supplicant *wpa_s, int freq)
 
 		res = wpa_drv_get_pref_freq_list(wpa_s, WPA_IF_P2P_GO,
 						 &size, pref_freq_list);
-		if (!is_p2p_allow_6ghz(wpa_s->global->p2p))
+		if (!res && size > 0 && !is_p2p_allow_6ghz(wpa_s->global->p2p))
 			size = p2p_remove_6ghz_channels(pref_freq_list, size);
 
 		if (!res && size > 0) {
