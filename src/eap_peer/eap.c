@@ -1773,6 +1773,10 @@ struct wpabuf * eap_sm_buildIdentity(struct eap_sm *sm, int id, int encrypted)
 	wpabuf_put_data(resp, identity, identity_len);
 	wpabuf_free(privacy_identity);
 
+	os_free(sm->identity);
+	sm->identity = os_memdup(identity, identity_len);
+	sm->identity_len = identity_len;
+
 	return resp;
 }
 
@@ -2207,6 +2211,14 @@ ssize_t tls_certificate_callback(void* ctx, const char* alias, uint8_t** value) 
 	return -1;
 }
 
+void tls_openssl_failure_callback(void* ctx, const char* msg) {
+	if (ctx == NULL || msg == NULL) return;
+	struct eap_sm *sm = (struct eap_sm*) ctx;
+	if (sm->eapol_cb && sm->eapol_cb->notify_open_ssl_failure) {
+		sm->eapol_cb->notify_open_ssl_failure(sm->eapol_ctx, msg);
+	}
+}
+
 /**
  * eap_peer_sm_init - Allocate and initialize EAP peer state machine
  * @eapol_ctx: Context data to be used with eapol_cb calls
@@ -2240,9 +2252,15 @@ struct eap_sm * eap_peer_sm_init(void *eapol_ctx,
 	dl_list_init(&sm->erp_keys);
 
 	os_memset(&tlsconf, 0, sizeof(tlsconf));
+#ifndef CONFIG_OPENSC_ENGINE_PATH
 	tlsconf.opensc_engine_path = conf->opensc_engine_path;
+#endif /* CONFIG_OPENSC_ENGINE_PATH */
+#ifndef CONFIG_PKCS11_ENGINE_PATH
 	tlsconf.pkcs11_engine_path = conf->pkcs11_engine_path;
+#endif /* CONFIG_PKCS11_ENGINE_PATH */
+#ifndef CONFIG_PKCS11_MODULE_PATH
 	tlsconf.pkcs11_module_path = conf->pkcs11_module_path;
+#endif /* CONFIG_PKCS11_MODULE_PATH */
 	tlsconf.openssl_ciphers = conf->openssl_ciphers;
 #ifdef CONFIG_FIPS
 	tlsconf.fips_mode = 1;
@@ -2251,6 +2269,7 @@ struct eap_sm * eap_peer_sm_init(void *eapol_ctx,
 	tlsconf.cb_ctx = sm;
 	tlsconf.cert_in_cb = conf->cert_in_cb;
 	tls_register_cert_callback(&tls_certificate_callback);
+	tls_register_openssl_failure_callback(&tls_openssl_failure_callback);
 	sm->ssl_ctx = tls_init(&tlsconf);
 	if (sm->ssl_ctx == NULL) {
 		wpa_printf(MSG_WARNING, "SSL: Failed to initialize TLS "
@@ -2288,6 +2307,7 @@ void eap_peer_sm_deinit(struct eap_sm *sm)
 		tls_deinit(sm->ssl_ctx2);
 	tls_deinit(sm->ssl_ctx);
 	eap_peer_erp_free_keys(sm);
+	os_free(sm->identity);
 	os_free(sm);
 }
 
