@@ -6,13 +6,14 @@
 #ifndef DRIVER_VIRTIO_WIFI_H
 #define DRIVER_VIRTIO_WIFI_H
 
+#include <stdint.h>
 extern int set_virtio_sock(int sock);
 extern int set_virtio_ctrl_sock(int sock);
 
 #define MAX_KEY_MATERIAL_LEN 32 /* max key length is 32 bytes */
 
 struct virtio_wifi_key_data {
-	u8 key_material[MAX_KEY_MATERIAL_LEN];
+	uint8_t key_material[MAX_KEY_MATERIAL_LEN];
 	int key_len;
 	int key_idx;
 };
