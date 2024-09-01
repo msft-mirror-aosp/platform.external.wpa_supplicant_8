@@ -56,7 +56,8 @@ cc_library_static {
     ],
 }
 
-filegroup {
+vintf_fragment {
     name: "android.hardware.wifi.supplicant.xml",
-    srcs: ["android.hardware.wifi.supplicant.xml"],
+    src: "android.hardware.wifi.supplicant.xml",
+    soc_specific: true,
 }
