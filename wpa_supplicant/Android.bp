@@ -57,6 +57,31 @@ cc_library_headers {
     soc_specific: true,
 }
 
+cc_library_headers {
+    name: "wpa_supplicant_headers_mainline",
+    export_include_dirs: [
+        ".",
+        "src",
+        "src/common",
+        "src/drivers",
+        "src/eap_common",
+        "src/eapol_supp",
+        "src/eap_peer",
+        "src/eap_server",
+        "src/l2_packet",
+        "src/radius",
+        "src/rsn_supp",
+        "src/tls",
+        "src/utils",
+        "src/wps",
+    ],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.wifi",
+    ],
+    min_sdk_version: "30",
+}
+
 filegroup {
     name: "wpa_supplicant_template.conf",
     srcs: ["wpa_supplicant_template.conf"],
@@ -1354,12 +1379,18 @@ wpa_supplicant_cc_binary {
 wpa_supplicant_cc_binary {
     name: "wpa_supplicant_mainline",
     shared_libs: [
+        "android.system.wifi.mainline_supplicant-ndk",
+        "libbase",
+        "libbinder_ndk",
         "libc",
         "libcrypto",
         "libcutils_sockets",
         "liblog",
         "libnl",
         "libssl",
+    ],
+    static_libs: [
+        "mainline_supplicant_aidl_bp",
     ],
     defaults: [
         "wpa_supplicant_srcs_default",
