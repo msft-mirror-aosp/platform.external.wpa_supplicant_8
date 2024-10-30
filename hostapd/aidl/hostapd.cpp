@@ -104,6 +104,12 @@ inline int32_t isAidlClientVersionAtLeast(int32_t expected_version)
 	return expected_version <= aidl_client_version;
 }
 
+inline int32_t areAidlServiceAndClientAtLeastVersion(int32_t expected_version)
+{
+	return isAidlServiceVersionAtLeast(expected_version)
+		&& isAidlClientVersionAtLeast(expected_version);
+}
+
 #define MAX_PORTS 1024
 bool GetInterfacesInBridge(std::string br_name,
                            std::vector<std::string>* interfaces) {
@@ -618,7 +624,7 @@ std::string CreateHostapdConfig(
 #ifdef CONFIG_IEEE80211BE
 	if (iface_params.hwModeParams.enable80211BE && !is_60Ghz_used) {
 		eht_params_as_string = "ieee80211be=1\n";
-		if (isAidlServiceVersionAtLeast(2) && isAidlClientVersionAtLeast(2)) {
+		if (areAidlServiceAndClientAtLeastVersion(2)) {
 			std::string interface_mac_addr = getInterfaceMacAddress(
 					iface_params.usesMlo ? br_name : iface_params.name);
 			if (interface_mac_addr.empty()) {
