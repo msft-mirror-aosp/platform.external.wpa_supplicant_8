@@ -35,6 +35,31 @@ extern "C"
 #include "drivers/linux_ioctl.h"
 }
 
+// don't use hostapd's wpa_printf for unit testing. It won't compile otherwise
+#ifdef ANDROID_HOSTAPD_UNITTEST
+#include <android-base/logging.h>
+constexpr size_t logbuf_size = 8192;
+static ::android::base::LogSeverity wpa_to_android_level(int level)
+{
+	if (level == MSG_ERROR)
+		return ::android::base::ERROR;
+	if (level == MSG_WARNING)
+		return ::android::base::WARNING;
+	if (level == MSG_INFO)
+		return ::android::base::INFO;
+	return ::android::base::DEBUG;
+}
+void wpa_printf(int level, const char *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+	char buffer[logbuf_size];
+	int res = snprintf(buffer, logbuf_size, fmt, ap);
+	if (res > 0 && res < logbuf_size) {
+		LOG(wpa_to_android_level(level)) << buffer;
+	}
+}
+#endif
+
 // The AIDL implementation for hostapd creates a hostapd.conf dynamically for
 // each interface. This file can then be used to hook onto the normal config
 // file parsing logic in hostapd code.  Helps us to avoid duplication of code
@@ -77,6 +102,12 @@ inline int32_t isAidlServiceVersionAtLeast(int32_t expected_version)
 inline int32_t isAidlClientVersionAtLeast(int32_t expected_version)
 {
 	return expected_version <= aidl_client_version;
+}
+
+inline int32_t areAidlServiceAndClientAtLeastVersion(int32_t expected_version)
+{
+	return isAidlServiceVersionAtLeast(expected_version)
+		&& isAidlClientVersionAtLeast(expected_version);
 }
 
 #define MAX_PORTS 1024
@@ -593,7 +624,7 @@ std::string CreateHostapdConfig(
 #ifdef CONFIG_IEEE80211BE
 	if (iface_params.hwModeParams.enable80211BE && !is_60Ghz_used) {
 		eht_params_as_string = "ieee80211be=1\n";
-		if (isAidlServiceVersionAtLeast(2) && isAidlClientVersionAtLeast(2)) {
+		if (areAidlServiceAndClientAtLeastVersion(2)) {
 			std::string interface_mac_addr = getInterfaceMacAddress(
 					iface_params.usesMlo ? br_name : iface_params.name);
 			if (interface_mac_addr.empty()) {
@@ -750,6 +781,10 @@ std::string CreateHostapdConfig(
 			"owe_transition_ifname=%s", owe_transition_ifname.c_str());
 	}
 
+	std::string ap_isolation_as_string = StringPrintf("ap_isolate=%s",
+			isAidlServiceVersionAtLeast(3) && nw_params.isClientIsolationEnabled ?
+			"1" : "0");
+
 	return StringPrintf(
 		"interface=%s\n"
 		"driver=nl80211\n"
@@ -775,6 +810,7 @@ std::string CreateHostapdConfig(
 		"%s\n"
 		"%s\n"
 		"%s\n"
+		"%s\n"
 		"%s\n",
 		iface_params.usesMlo ? br_name.c_str() : iface_params.name.c_str(),
 		iface_params.name.c_str(),
@@ -794,7 +830,8 @@ std::string CreateHostapdConfig(
 		owe_transition_ifname_as_string.c_str(),
 		enable_edmg_as_string.c_str(),
 		edmg_channel_as_string.c_str(),
-		vendor_elements_as_string.c_str());
+		vendor_elements_as_string.c_str(),
+		ap_isolation_as_string.c_str());
 }
 
 Generation getGeneration(hostapd_hw_modes *current_mode)
@@ -855,23 +892,39 @@ ChannelBandwidth getChannelBandwidth(struct hostapd_config *iconf)
 	}
 }
 
+std::optional<struct sta_info*> getStaInfoByMacAddr(const struct hostapd_data* iface_hapd,
+		const u8 *mac_addr) {
+	if (iface_hapd == nullptr || mac_addr == nullptr){
+		wpa_printf(MSG_ERROR, "nullptr passsed to getStaInfoByMacAddr!");
+		return std::nullopt;
+	}
+
+	for (struct sta_info* sta_ptr = iface_hapd->sta_list; sta_ptr; sta_ptr = sta_ptr->next) {
+		int res;
+		res = memcmp(sta_ptr->addr, mac_addr, ETH_ALEN);
+		if (res == 0) {
+			return sta_ptr;
+		}
+	}
+	return std::nullopt;
+}
+
 bool forceStaDisconnection(struct hostapd_data* hapd,
 			   const std::vector<uint8_t>& client_address,
 			   const uint16_t reason_code) {
-	struct sta_info *sta;
 	if (client_address.size() != ETH_ALEN) {
 		return false;
 	}
-	for (sta = hapd->sta_list; sta; sta = sta->next) {
-		int res;
-		res = memcmp(sta->addr, client_address.data(), ETH_ALEN);
-		if (res == 0) {
-			wpa_printf(MSG_INFO, "Force client:" MACSTR " disconnect with reason: %d",
-			    MAC2STR(client_address.data()), reason_code);
-			ap_sta_disconnect(hapd, sta, sta->addr, reason_code);
-			return true;
-		}
+
+	auto sta_ptr_optional = getStaInfoByMacAddr(hapd, client_address.data());
+	if (sta_ptr_optional.has_value()) {
+		wpa_printf(MSG_INFO, "Force client:" MACSTR " disconnect with reason: %d",
+				MAC2STR(client_address.data()), reason_code);
+		ap_sta_disconnect(hapd, sta_ptr_optional.value(), sta_ptr_optional.value()->addr,
+				reason_code);
+		return true;
 	}
+
 	return false;
 }
 
@@ -993,6 +1046,12 @@ Hostapd::Hostapd(struct hapd_interfaces* interfaces)
 ::ndk::ScopedAStatus Hostapd::setDebugParams(DebugLevel level)
 {
 	return setDebugParamsInternal(level);
+}
+
+::ndk::ScopedAStatus Hostapd::removeLinkFromMultipleLinkBridgedApIface(
+        const std::string& iface_name, const std::string& linkIdentity)
+{
+	return removeLinkFromMultipleLinkBridgedApIfaceInternal(iface_name, linkIdentity);
 }
 
 ::ndk::ScopedAStatus Hostapd::addAccessPointInternal(
@@ -1260,6 +1319,15 @@ struct hostapd_data * hostapd_get_iface_by_link_id(struct hapd_interfaces *inter
 		info.apIfaceInstance = instanceName;
 		info.clientAddress.assign(mac_addr, mac_addr + ETH_ALEN);
 		info.isConnected = authorized;
+		if(isAidlServiceVersionAtLeast(3) && !authorized) {
+			u16 disconnect_reason_code = WLAN_REASON_UNSPECIFIED;
+			auto sta_ptr_optional = getStaInfoByMacAddr(iface_hapd, mac_addr);
+			if (sta_ptr_optional.has_value()){
+				disconnect_reason_code = sta_ptr_optional.value()->deauth_reason;
+			}
+			info.disconnectReasonCode =
+					static_cast<common::DeauthenticationReasonCode>(disconnect_reason_code);
+		}
 		for (const auto &callback : callbacks_) {
 			auto status = callback->onConnectedClientsChanged(info);
 			if (!status.isOk()) {
@@ -1428,6 +1496,23 @@ struct hostapd_data * hostapd_get_iface_by_link_id(struct hapd_interfaces *inter
 {
 	wpa_debug_level = static_cast<uint32_t>(level);
 	return ndk::ScopedAStatus::ok();
+}
+
+::ndk::ScopedAStatus Hostapd::removeLinkFromMultipleLinkBridgedApIfaceInternal(
+const std::string& iface_name, const std::string& linkIdentity)
+{
+	if (!hostapd_get_iface(interfaces_, iface_name.c_str())) {
+		wpa_printf(MSG_ERROR, "Interface %s doesn't exist", iface_name.c_str());
+		return createStatus(HostapdStatusCode::FAILURE_IFACE_UNKNOWN);
+	}
+	struct hostapd_data* iface_hapd =
+		hostapd_get_iface_by_link_id(interfaces_, (size_t) linkIdentity.c_str());
+	if (iface_hapd) {
+		if (0 == hostapd_link_remove(iface_hapd, 1)) {
+			return ndk::ScopedAStatus::ok();
+		}
+	}
+	return createStatus(HostapdStatusCode::FAILURE_ARGS_INVALID);
 }
 
 }  // namespace hostapd
