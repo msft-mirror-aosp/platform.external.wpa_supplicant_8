@@ -843,6 +843,58 @@ bool StaIface::isValid()
 		&StaIface::disableMscsInternal);
 }
 
+::ndk::ScopedAStatus StaIface::getUsdCapabilities(UsdCapabilities* _aidl_return)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_UNKNOWN,
+		&StaIface::getUsdCapabilitiesInternal, _aidl_return);
+}
+
+::ndk::ScopedAStatus StaIface::startUsdPublish(int32_t in_cmdId,
+	const UsdPublishConfig& in_usdPublishConfig, int32_t* _aidl_return)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_UNKNOWN,
+		&StaIface::startUsdPublishInternal, _aidl_return, in_usdPublishConfig);
+}
+
+::ndk::ScopedAStatus StaIface::startUsdSubscribe(int32_t in_cmdId,
+	const UsdSubscribeConfig& in_usdSubscribeConfig, int32_t* _aidl_return)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_UNKNOWN,
+		&StaIface::startUsdSubscribeInternal, _aidl_return, in_usdSubscribeConfig);
+}
+
+::ndk::ScopedAStatus StaIface::updateUsdPublish(int32_t in_publishId,
+	const std::vector<uint8_t>& in_serviceSpecificInfo)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_UNKNOWN,
+		&StaIface::updateUsdPublishInternal, in_publishId, in_serviceSpecificInfo);
+}
+
+::ndk::ScopedAStatus StaIface::cancelUsdPublish(int32_t in_publishId)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_UNKNOWN,
+		&StaIface::cancelUsdPublishInternal, in_publishId);
+}
+
+::ndk::ScopedAStatus StaIface::cancelUsdSubscribe(int32_t in_subscribeId)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_UNKNOWN,
+		&StaIface::cancelUsdSubscribeInternal, in_subscribeId);
+}
+
+::ndk::ScopedAStatus StaIface::sendUsdMessage(const UsdMessageInfo& in_messageInfo)
+{
+	return validateAndCall(
+		this, SupplicantStatusCode::FAILURE_UNKNOWN,
+		&StaIface::sendUsdMessageInternal, in_messageInfo);
+}
+
 std::pair<std::string, ndk::ScopedAStatus> StaIface::getNameInternal()
 {
 	return {ifname_, ndk::ScopedAStatus::ok()};
@@ -2553,6 +2605,38 @@ StaIface::removeQosPolicyForScsInternal(const std::vector<uint8_t>& scsPolicyIds
 	wpa_printf(MSG_INFO, "MSCS remove request status: %d", status);
 
 	return ndk::ScopedAStatus::ok();
+}
+
+std::pair<UsdCapabilities, ndk::ScopedAStatus> StaIface::getUsdCapabilitiesInternal() {
+	UsdCapabilities capabilities;
+	return {capabilities, ndk::ScopedAStatus::ok()};
+}
+
+std::pair<int32_t, ndk::ScopedAStatus> StaIface::startUsdPublishInternal(
+		const UsdPublishConfig& usdPublishConfig) {
+	return {-1, createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED)};
+}
+
+std::pair<int32_t, ndk::ScopedAStatus> StaIface::startUsdSubscribeInternal(
+		const UsdSubscribeConfig& usdSubscribeConfig) {
+	return {-1, createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED)};
+}
+
+::ndk::ScopedAStatus StaIface::updateUsdPublishInternal(int32_t publishId,
+		const std::vector<uint8_t>& serviceSpecificInfo) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+::ndk::ScopedAStatus StaIface::cancelUsdPublishInternal(int32_t publishId) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+::ndk::ScopedAStatus StaIface::cancelUsdSubscribeInternal(int32_t subscribeId) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+::ndk::ScopedAStatus StaIface::sendUsdMessageInternal(const UsdMessageInfo& messageInfo) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
 }
 
 /**
