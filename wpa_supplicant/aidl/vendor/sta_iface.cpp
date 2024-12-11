@@ -38,6 +38,11 @@ using aidl::android::hardware::wifi::supplicant::KeyMgmtMask;
 using aidl::android::hardware::wifi::supplicant::LegacyMode;
 using aidl::android::hardware::wifi::supplicant::RxFilterType;
 using aidl::android::hardware::wifi::supplicant::SupplicantStatusCode;
+using aidl::android::hardware::wifi::supplicant::UsdBaseConfig;
+using aidl::android::hardware::wifi::supplicant::UsdCapabilities;
+using aidl::android::hardware::wifi::supplicant::UsdPublishConfig;
+using aidl::android::hardware::wifi::supplicant::UsdPublishTransmissionType;
+using aidl::android::hardware::wifi::supplicant::UsdServiceProtoType;
 using aidl::android::hardware::wifi::supplicant::WifiChannelWidthInMhz;
 using aidl::android::hardware::wifi::supplicant::WifiTechnology;
 using aidl::android::hardware::wifi::supplicant::misc_utils::createStatus;
@@ -90,6 +95,21 @@ uint8_t convertAidlBtCoexModeToInternal(
 		return 2;
 	};
 	WPA_ASSERT(false);
+}
+
+nan_service_protocol_type convertAidlServiceProtoTypeToInternal(
+	UsdServiceProtoType type)
+{
+	switch (type) {
+	case UsdServiceProtoType::GENERIC:
+		return NAN_SRV_PROTO_GENERIC;
+	case UsdServiceProtoType::CSA_MATTER:
+		return NAN_SRV_PROTO_CSA_MATTER;
+	default:
+		// Default case is not expected, due
+		// to the USD validation method
+		return NAN_SRV_PROTO_GENERIC;
+	};
 }
 
 ndk::ScopedAStatus doZeroArgDriverCommand(
@@ -290,6 +310,93 @@ inline std::array<uint8_t, ETH_ALEN> macAddrToArray(const uint8_t* mac_addr) {
 	std::array<uint8_t, ETH_ALEN> arr;
 	std::copy(mac_addr, mac_addr + ETH_ALEN, std::begin(arr));
 	return arr;
+}
+
+template <typename T>
+inline bool checkContainerSize(const T& container, int maxSize) {
+  return container.size() <= maxSize;
+}
+
+template <typename T>
+inline bool isValidEnumValue(T value, T enumRangeMin, T enumRangeMax) {
+	return static_cast<uint32_t>(value) >= static_cast<uint32_t>(enumRangeMin)
+		&& static_cast<uint32_t>(value) <= static_cast<uint32_t>(enumRangeMax);
+}
+
+bool validateUsdBaseConfig(UsdBaseConfig baseConfig) {
+	if (!isValidEnumValue(baseConfig.serviceProtoType,
+			UsdServiceProtoType::GENERIC, UsdServiceProtoType::CSA_MATTER)) {
+		wpa_printf(MSG_ERROR, "Unknown protocol type received: %d",
+			static_cast<int>(baseConfig.serviceProtoType));
+		return false;
+	}
+	if (!checkContainerSize(baseConfig.serviceName, kMaxUsdServiceNameLengthBytes)) {
+		wpa_printf(MSG_ERROR, "Service name of size %zu exceeds the supported size of %d",
+			baseConfig.serviceName.size(), kMaxUsdServiceNameLengthBytes);
+		return false;
+	}
+	if (!checkContainerSize(baseConfig.serviceSpecificInfo, kMaxUsdLocalSsiLengthBytes)) {
+		wpa_printf(MSG_ERROR, "Service specific info of size %zu exceeds"
+			" the supported size of %d", baseConfig.serviceSpecificInfo.size(),
+			kMaxUsdLocalSsiLengthBytes);
+		return false;
+	}
+	if (baseConfig.txMatchFilter.has_value() && !checkContainerSize(
+			baseConfig.txMatchFilter.value(), kMaxUsdMatchFilterLengthBytes)) {
+		wpa_printf(MSG_ERROR, "TX match filter of size %zu exceeds"
+			" the supported size of %d", baseConfig.txMatchFilter.value().size(),
+			kMaxUsdMatchFilterLengthBytes);
+		return false;
+	}
+	if (baseConfig.rxMatchFilter.has_value() && !checkContainerSize(
+			baseConfig.rxMatchFilter.value(), kMaxUsdMatchFilterLengthBytes)) {
+		wpa_printf(MSG_ERROR, "RX match filter of size %zu exceeds"
+			" the supported size of %d", baseConfig.rxMatchFilter.value().size(),
+			kMaxUsdMatchFilterLengthBytes);
+		return false;
+	}
+	return true;
+}
+
+bool validateUsdPublishConfig(UsdPublishConfig publishConfig) {
+	if (!validateUsdBaseConfig(publishConfig.usdBaseConfig)) {
+		return false;
+	}
+	if (!isValidEnumValue(publishConfig.publishType,
+			UsdPublishConfig::PublishType::SOLICITED_ONLY,
+			UsdPublishConfig::PublishType::SOLICITED_AND_UNSOLICITED)) {
+		wpa_printf(MSG_ERROR, "Unknown publish type received: %d",
+			static_cast<int>(publishConfig.publishType));
+		return false;
+	}
+	if (!isValidEnumValue(publishConfig.transmissionType,
+			UsdPublishTransmissionType::UNICAST,
+			UsdPublishTransmissionType::MULTICAST)) {
+		wpa_printf(MSG_ERROR, "Unknown transmission type received: %d",
+			static_cast<int>(publishConfig.transmissionType));
+		return false;
+	}
+	return true;
+}
+
+struct nan_publish_params convertAidlNanPublishParamsToInternal(UsdPublishConfig publishConfig) {
+	// TODO: Fill the disable_events field
+	struct nan_publish_params nanPublishParams;
+	nanPublishParams.unsolicited =
+		publishConfig.publishType == UsdPublishConfig::PublishType::UNSOLICITED_ONLY
+			|| publishConfig.publishType == UsdPublishConfig::PublishType::SOLICITED_AND_UNSOLICITED;
+	nanPublishParams.solicited =
+		publishConfig.publishType == UsdPublishConfig::PublishType::SOLICITED_ONLY
+			|| publishConfig.publishType == UsdPublishConfig::PublishType::SOLICITED_AND_UNSOLICITED;
+	nanPublishParams.solicited_multicast = nanPublishParams.solicited &&
+		publishConfig.transmissionType == UsdPublishTransmissionType::MULTICAST;
+	nanPublishParams.ttl = publishConfig.usdBaseConfig.ttlSec;
+	nanPublishParams.fsd = publishConfig.isFsd;
+	nanPublishParams.freq = publishConfig.usdBaseConfig.defaultFreqMhz;
+	nanPublishParams.announcement_period = publishConfig.announcementPeriodMillis;
+	// Pass the original pointer to the freq list, since the receiver will memcpy the data
+	nanPublishParams.freq_list = publishConfig.usdBaseConfig.freqsMhz.data();
+	return nanPublishParams;
 }
 
 }  // namespace
@@ -863,7 +970,7 @@ bool StaIface::isValid()
 {
 	return validateAndCall(
 		this, SupplicantStatusCode::FAILURE_UNKNOWN,
-		&StaIface::startUsdPublishInternal, in_usdPublishConfig);
+		&StaIface::startUsdPublishInternal, in_cmdId, in_usdPublishConfig);
 }
 
 ::ndk::ScopedAStatus StaIface::startUsdSubscribe(int32_t in_cmdId,
@@ -2632,8 +2739,31 @@ std::pair<UsdCapabilities, ndk::ScopedAStatus> StaIface::getUsdCapabilitiesInter
 #ifdef CONFIG_NAN_USD
 
 ndk::ScopedAStatus StaIface::startUsdPublishInternal(
-		const UsdPublishConfig& usdPublishConfig) {
-	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+		int32_t cmdId, const UsdPublishConfig& usdPublishConfig) {
+	if (!validateUsdPublishConfig(usdPublishConfig)) {
+		return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
+	}
+	auto ssiBuffer = misc_utils::convertVectorToWpaBuf(
+		usdPublishConfig.usdBaseConfig.serviceSpecificInfo);
+	if (ssiBuffer.get() == nullptr) {
+		wpa_printf(MSG_INFO, "Unable to convert USD publish SSI to buffer");
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+
+	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	struct nan_publish_params nanPublishParams =
+		convertAidlNanPublishParamsToInternal(usdPublishConfig);
+
+	int status = wpas_nan_usd_publish(
+		wpa_s, usdPublishConfig.usdBaseConfig.serviceName.c_str(),
+		convertAidlServiceProtoTypeToInternal(
+			usdPublishConfig.usdBaseConfig.serviceProtoType),
+		ssiBuffer.get(), &nanPublishParams, false /* p2p */);
+	if (status < 0) {
+		wpa_printf(MSG_INFO, "Failed to configure USD publish");
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+	return ndk::ScopedAStatus::ok();
 }
 
 ndk::ScopedAStatus StaIface::startUsdSubscribeInternal(
@@ -2661,7 +2791,7 @@ ndk::ScopedAStatus StaIface::startUsdSubscribeInternal(
 #else /* CONFIG_NAN_USD */
 
 ndk::ScopedAStatus StaIface::startUsdPublishInternal(
-		const UsdPublishConfig& usdPublishConfig) {
+		int32_t cmdId, const UsdPublishConfig& usdPublishConfig) {
 	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
 }
 
