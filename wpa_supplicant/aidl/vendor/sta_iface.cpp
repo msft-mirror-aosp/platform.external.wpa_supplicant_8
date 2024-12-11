@@ -43,6 +43,7 @@ using aidl::android::hardware::wifi::supplicant::UsdCapabilities;
 using aidl::android::hardware::wifi::supplicant::UsdPublishConfig;
 using aidl::android::hardware::wifi::supplicant::UsdPublishTransmissionType;
 using aidl::android::hardware::wifi::supplicant::UsdServiceProtoType;
+using aidl::android::hardware::wifi::supplicant::UsdSubscribeConfig;
 using aidl::android::hardware::wifi::supplicant::WifiChannelWidthInMhz;
 using aidl::android::hardware::wifi::supplicant::WifiTechnology;
 using aidl::android::hardware::wifi::supplicant::misc_utils::createStatus;
@@ -379,6 +380,20 @@ bool validateUsdPublishConfig(UsdPublishConfig publishConfig) {
 	return true;
 }
 
+bool validateUsdSubscribeConfig(UsdSubscribeConfig subscribeConfig) {
+	if (!validateUsdBaseConfig(subscribeConfig.usdBaseConfig)) {
+		return false;
+	}
+	if (!isValidEnumValue(subscribeConfig.subscribeType,
+			UsdSubscribeConfig::SubscribeType::PASSIVE_MODE,
+			UsdSubscribeConfig::SubscribeType::ACTIVE_MODE)) {
+		wpa_printf(MSG_ERROR, "Unknown subscribe type received: %d",
+			static_cast<int>(subscribeConfig.subscribeType));
+		return false;
+	}
+	return true;
+}
+
 struct nan_publish_params convertAidlNanPublishParamsToInternal(UsdPublishConfig publishConfig) {
 	// TODO: Fill the disable_events field
 	struct nan_publish_params nanPublishParams;
@@ -397,6 +412,19 @@ struct nan_publish_params convertAidlNanPublishParamsToInternal(UsdPublishConfig
 	// Pass the original pointer to the freq list, since the receiver will memcpy the data
 	nanPublishParams.freq_list = publishConfig.usdBaseConfig.freqsMhz.data();
 	return nanPublishParams;
+}
+
+struct nan_subscribe_params convertAidlNanSubscribeParamsToInternal(
+		UsdSubscribeConfig subscribeConfig) {
+	struct nan_subscribe_params nanSubscribeParams;
+	nanSubscribeParams.active =
+		subscribeConfig.subscribeType == UsdSubscribeConfig::SubscribeType::ACTIVE_MODE;
+	nanSubscribeParams.ttl = subscribeConfig.usdBaseConfig.ttlSec;
+	nanSubscribeParams.freq = subscribeConfig.usdBaseConfig.defaultFreqMhz;
+	nanSubscribeParams.query_period = subscribeConfig.queryPeriodMillis;
+	// Pass the original pointer to the freq list, since the receiver will memcpy the data
+	nanSubscribeParams.freq_list = subscribeConfig.usdBaseConfig.freqsMhz.data();
+	return nanSubscribeParams;
 }
 
 }  // namespace
@@ -978,7 +1006,7 @@ bool StaIface::isValid()
 {
 	return validateAndCall(
 		this, SupplicantStatusCode::FAILURE_UNKNOWN,
-		&StaIface::startUsdSubscribeInternal, in_usdSubscribeConfig);
+		&StaIface::startUsdSubscribeInternal, in_cmdId, in_usdSubscribeConfig);
 }
 
 ::ndk::ScopedAStatus StaIface::updateUsdPublish(int32_t in_publishId,
@@ -2767,8 +2795,31 @@ ndk::ScopedAStatus StaIface::startUsdPublishInternal(
 }
 
 ndk::ScopedAStatus StaIface::startUsdSubscribeInternal(
-		const UsdSubscribeConfig& usdSubscribeConfig) {
-	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+		int32_t cmdId, const UsdSubscribeConfig& usdSubscribeConfig) {
+	if (!validateUsdSubscribeConfig(usdSubscribeConfig)) {
+		return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
+	}
+	auto ssiBuffer = misc_utils::convertVectorToWpaBuf(
+		usdSubscribeConfig.usdBaseConfig.serviceSpecificInfo);
+	if (ssiBuffer.get() == nullptr) {
+		wpa_printf(MSG_INFO, "Unable to convert USD subscribe SSI to buffer");
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+
+	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+	struct nan_subscribe_params nanSubscribeParams =
+		convertAidlNanSubscribeParamsToInternal(usdSubscribeConfig);
+
+	int status = wpas_nan_usd_subscribe(
+		wpa_s, usdSubscribeConfig.usdBaseConfig.serviceName.c_str(),
+		convertAidlServiceProtoTypeToInternal(
+			usdSubscribeConfig.usdBaseConfig.serviceProtoType),
+		ssiBuffer.get(), &nanSubscribeParams, false /* p2p */);
+	if (status < 0) {
+		wpa_printf(MSG_INFO, "Failed to configure USD subscribe");
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+	return ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus StaIface::updateUsdPublishInternal(int32_t publishId,
@@ -2796,7 +2847,7 @@ ndk::ScopedAStatus StaIface::startUsdPublishInternal(
 }
 
 ndk::ScopedAStatus StaIface::startUsdSubscribeInternal(
-		const UsdSubscribeConfig& usdSubscribeConfig) {
+		int32_t cmdId, const UsdSubscribeConfig& usdSubscribeConfig) {
 	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
 }
 

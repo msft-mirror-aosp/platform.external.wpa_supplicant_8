@@ -295,7 +295,8 @@ private:
 	std::pair<UsdCapabilities, ndk::ScopedAStatus> getUsdCapabilitiesInternal();
 	::ndk::ScopedAStatus startUsdPublishInternal(
 		int32_t cmdId, const UsdPublishConfig& usdPublishConfig);
-	::ndk::ScopedAStatus startUsdSubscribeInternal(const UsdSubscribeConfig& usdSubscribeConfig);
+	::ndk::ScopedAStatus startUsdSubscribeInternal(
+		int32_t cmdId, const UsdSubscribeConfig& usdSubscribeConfig);
 	::ndk::ScopedAStatus updateUsdPublishInternal(int32_t publishId,
 		const std::vector<uint8_t>& serviceSpecificInfo);
 	::ndk::ScopedAStatus cancelUsdPublishInternal(int32_t publishId);
