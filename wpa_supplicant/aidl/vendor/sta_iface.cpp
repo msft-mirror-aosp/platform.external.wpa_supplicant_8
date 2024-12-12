@@ -2824,19 +2824,59 @@ ndk::ScopedAStatus StaIface::startUsdSubscribeInternal(
 
 ::ndk::ScopedAStatus StaIface::updateUsdPublishInternal(int32_t publishId,
 		const std::vector<uint8_t>& serviceSpecificInfo) {
-	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+	if (!checkContainerSize(serviceSpecificInfo, kMaxUsdLocalSsiLengthBytes)) {
+		wpa_printf(MSG_ERROR, "Service specific info of size %zu exceeds the"
+			" supported size of %d", serviceSpecificInfo.size(),
+			kMaxUsdLocalSsiLengthBytes);
+		return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
+	}
+	auto ssiBuffer = misc_utils::convertVectorToWpaBuf(serviceSpecificInfo);
+	if (ssiBuffer.get() == nullptr) {
+		wpa_printf(MSG_INFO, "Unable to convert USD update SSI to buffer");
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+	int status = wpas_nan_usd_update_publish(
+		retrieveIfacePtr(), publishId, ssiBuffer.get());
+	if (status < 0) {
+		wpa_printf(MSG_INFO, "Failed to update USD publish");
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+	return ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus StaIface::cancelUsdPublishInternal(int32_t publishId) {
-	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+	// Status code is returned by the callback
+	wpas_nan_usd_cancel_publish(retrieveIfacePtr(), publishId);
+	return ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus StaIface::cancelUsdSubscribeInternal(int32_t subscribeId) {
-	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+	// Status code is returned by the callback
+	wpas_nan_usd_cancel_subscribe(retrieveIfacePtr(), subscribeId);
+	return ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus StaIface::sendUsdMessageInternal(const UsdMessageInfo& messageInfo) {
-	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+	if (!checkContainerSize(messageInfo.message, kMaxUsdLocalSsiLengthBytes)) {
+		wpa_printf(MSG_ERROR, "Message of size %zu exceeds the supported size of %d",
+			messageInfo.message.size(), kMaxUsdLocalSsiLengthBytes);
+		return createStatus(SupplicantStatusCode::FAILURE_ARGS_INVALID);
+	}
+	auto msgBuffer = misc_utils::convertVectorToWpaBuf(messageInfo.message);
+	if (msgBuffer.get() == nullptr) {
+		wpa_printf(MSG_INFO, "Unable to convert message contents to buffer");
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+	int handle = messageInfo.ownId;
+	int reqInstanceId = messageInfo.peerId;
+	int status = wpas_nan_usd_transmit(
+		retrieveIfacePtr(), handle, msgBuffer.get(), nullptr /* elems */,
+		messageInfo.peerMacAddress.data(), reqInstanceId);
+	if (status < 0) {
+		wpa_printf(MSG_INFO, "Failed to send USD message");
+		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
+	}
+	return ndk::ScopedAStatus::ok();
 }
 
 #else /* CONFIG_NAN_USD */
