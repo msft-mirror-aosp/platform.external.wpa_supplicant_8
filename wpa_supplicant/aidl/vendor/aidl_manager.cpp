@@ -2976,6 +2976,62 @@ void AidlManager::notifyQosPolicyScsResponse(struct wpa_supplicant *wpa_s,
 			std::placeholders::_1, scsResponses));
 }
 
+void AidlManager::notifyUsdPublishStarted(struct wpa_supplicant *wpa_s,
+		int cmd_id, int publish_id)
+{
+
+}
+void AidlManager::notifyUsdSubscribeStarted(struct wpa_supplicant *wpa_s,
+		int cmd_id, int subscribe_id)
+{
+
+}
+void AidlManager::notifyUsdPublishConfigFailed(struct wpa_supplicant *wpa_s, int cmd_id)
+{
+
+}
+
+void AidlManager::notifyUsdSubscribeConfigFailed(struct wpa_supplicant *wpa_s, int cmd_id)
+{
+
+}
+
+void AidlManager::notifyUsdServiceDiscovered(struct wpa_supplicant *wpa_s,
+		enum nan_service_protocol_type srv_proto_type,
+		int subscribe_id, int peer_publish_id, const u8 *peer_addr,
+		bool fsd, const u8 *ssi, size_t ssi_len)
+{
+
+}
+
+void AidlManager::notifyUsdPublishReplied(struct wpa_supplicant *wpa_s,
+		enum nan_service_protocol_type srv_proto_type,
+		int publish_id, int peer_subscribe_id,
+		const u8 *peer_addr, const u8 *ssi, size_t ssi_len)
+{
+
+}
+
+void AidlManager::notifyUsdMessageReceived(struct wpa_supplicant *wpa_s, int id,
+		int peer_instance_id, const u8 *peer_addr,
+		const u8 *message, size_t message_len)
+{
+
+}
+
+
+void AidlManager::notifyUsdPublishTerminated(struct wpa_supplicant *wpa_s,
+		int publish_id, enum nan_de_reason reason)
+{
+
+}
+
+void AidlManager::notifyUsdSubscribeTerminated(struct wpa_supplicant *wpa_s,
+		int subscribe_id, enum nan_de_reason reason)
+{
+
+}
+
 }  // namespace supplicant
 }  // namespace wifi
 }  // namespace hardware

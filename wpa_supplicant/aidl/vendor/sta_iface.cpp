@@ -2782,15 +2782,23 @@ ndk::ScopedAStatus StaIface::startUsdPublishInternal(
 	struct nan_publish_params nanPublishParams =
 		convertAidlNanPublishParamsToInternal(usdPublishConfig);
 
-	int status = wpas_nan_usd_publish(
+	int publishId = wpas_nan_usd_publish(
 		wpa_s, usdPublishConfig.usdBaseConfig.serviceName.c_str(),
 		convertAidlServiceProtoTypeToInternal(
 			usdPublishConfig.usdBaseConfig.serviceProtoType),
 		ssiBuffer.get(), &nanPublishParams, false /* p2p */);
-	if (status < 0) {
+
+	// Core supplicant does not have an internal callback for USD publish, but some
+	// implementations may decide to offload and return the result in a callback.
+	// In our case (core supplicant), the AIDL callback will be invoked directly here.
+	AidlManager *aidl_manager = AidlManager::getInstance();
+	WPA_ASSERT(aidl_manager);
+	if (publishId < 0) {
 		wpa_printf(MSG_INFO, "Failed to configure USD publish");
+		aidl_manager->notifyUsdPublishConfigFailed(wpa_s, cmdId);
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
+	aidl_manager->notifyUsdPublishStarted(wpa_s, cmdId, publishId);
 	return ndk::ScopedAStatus::ok();
 }
 
@@ -2810,15 +2818,21 @@ ndk::ScopedAStatus StaIface::startUsdSubscribeInternal(
 	struct nan_subscribe_params nanSubscribeParams =
 		convertAidlNanSubscribeParamsToInternal(usdSubscribeConfig);
 
-	int status = wpas_nan_usd_subscribe(
+	int subscribeId = wpas_nan_usd_subscribe(
 		wpa_s, usdSubscribeConfig.usdBaseConfig.serviceName.c_str(),
 		convertAidlServiceProtoTypeToInternal(
 			usdSubscribeConfig.usdBaseConfig.serviceProtoType),
 		ssiBuffer.get(), &nanSubscribeParams, false /* p2p */);
-	if (status < 0) {
+
+	// See comment in startUsdPublishInternal regarding callbacks
+	AidlManager *aidl_manager = AidlManager::getInstance();
+	WPA_ASSERT(aidl_manager);
+	if (subscribeId < 0) {
 		wpa_printf(MSG_INFO, "Failed to configure USD subscribe");
+		aidl_manager->notifyUsdSubscribeConfigFailed(wpa_s, cmdId);
 		return createStatus(SupplicantStatusCode::FAILURE_UNKNOWN);
 	}
+	aidl_manager->notifyUsdSubscribeStarted(wpa_s, cmdId, subscribeId);
 	return ndk::ScopedAStatus::ok();
 }
 
