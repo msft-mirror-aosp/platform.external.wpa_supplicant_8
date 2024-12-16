@@ -2628,6 +2628,9 @@ std::pair<UsdCapabilities, ndk::ScopedAStatus> StaIface::getUsdCapabilitiesInter
 	return {capabilities, ndk::ScopedAStatus::ok()};
 }
 
+// TODO (b/384527237): Fix linker error to avoid having a separate default implementation
+#ifdef CONFIG_NAN_USD
+
 ndk::ScopedAStatus StaIface::startUsdPublishInternal(
 		const UsdPublishConfig& usdPublishConfig) {
 	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
@@ -2654,6 +2657,37 @@ ndk::ScopedAStatus StaIface::startUsdSubscribeInternal(
 ::ndk::ScopedAStatus StaIface::sendUsdMessageInternal(const UsdMessageInfo& messageInfo) {
 	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
 }
+
+#else /* CONFIG_NAN_USD */
+
+ndk::ScopedAStatus StaIface::startUsdPublishInternal(
+		const UsdPublishConfig& usdPublishConfig) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+ndk::ScopedAStatus StaIface::startUsdSubscribeInternal(
+		const UsdSubscribeConfig& usdSubscribeConfig) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+::ndk::ScopedAStatus StaIface::updateUsdPublishInternal(int32_t publishId,
+		const std::vector<uint8_t>& serviceSpecificInfo) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+::ndk::ScopedAStatus StaIface::cancelUsdPublishInternal(int32_t publishId) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+::ndk::ScopedAStatus StaIface::cancelUsdSubscribeInternal(int32_t subscribeId) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+::ndk::ScopedAStatus StaIface::sendUsdMessageInternal(const UsdMessageInfo& messageInfo) {
+	return createStatus(SupplicantStatusCode::FAILURE_UNSUPPORTED);
+}
+
+#endif /* CONFIG_NAN_USD */
 
 /**
  * Retrieve the underlying |wpa_supplicant| struct
