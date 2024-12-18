@@ -58,6 +58,14 @@ constexpr uint32_t kExtRadioWorkDefaultTimeoutInSec =
 	static_cast<uint32_t>(ISupplicant::EXT_RADIO_WORK_TIMEOUT_IN_SECS);
 constexpr char kExtRadioWorkNamePrefix[] = "ext:";
 
+constexpr bool kIsUsdPublisherSupported = false;
+constexpr bool kIsUsdSubscriberSupported = false;
+constexpr int32_t kMaxUsdLocalSsiLengthBytes = 1400;
+constexpr int32_t kMaxUsdServiceNameLengthBytes = 255;
+constexpr int32_t kMaxUsdMatchFilterLengthBytes = 255;
+constexpr int32_t kMaxNumUsdPublishSessions = 1;
+constexpr int32_t kMaxNumUsdSubscribeSessions = 1;
+
 uint8_t convertAidlRxFilterTypeToInternal(
 	RxFilterType type)
 {
@@ -2608,7 +2616,15 @@ StaIface::removeQosPolicyForScsInternal(const std::vector<uint8_t>& scsPolicyIds
 }
 
 std::pair<UsdCapabilities, ndk::ScopedAStatus> StaIface::getUsdCapabilitiesInternal() {
+	// TODO (b/382756996): Retrieve the capabilities dynamically
 	UsdCapabilities capabilities;
+	capabilities.isUsdPublisherSupported = kIsUsdPublisherSupported;
+	capabilities.isUsdSubscriberSupported = kIsUsdSubscriberSupported;
+	capabilities.maxLocalSsiLengthBytes = kMaxUsdLocalSsiLengthBytes;
+	capabilities.maxServiceNameLengthBytes = kMaxUsdServiceNameLengthBytes;
+	capabilities.maxMatchFilterLengthBytes = kMaxUsdMatchFilterLengthBytes;
+	capabilities.maxNumPublishSessions = kMaxNumUsdPublishSessions;
+	capabilities.maxNumSubscribeSessions = kMaxNumUsdSubscribeSessions;
 	return {capabilities, ndk::ScopedAStatus::ok()};
 }
 
