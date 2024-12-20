@@ -1308,7 +1308,7 @@ struct hostapd_data * hostapd_get_iface_by_link_id(struct hapd_interfaces *inter
 	const std::string owe_transition_ifname)
 {
 	if (iface_params.usesMlo) { // the mlo case, iface name is instance name which is mld_link_id
-		if (hostapd_get_iface_by_link_id(interfaces_, (size_t) iface_params.name.c_str())) {
+		if (hostapd_get_iface_by_link_id(interfaces_, std::stoi(iface_params.name.c_str()))) {
 			wpa_printf(
 				MSG_ERROR, "Instance link id %s already present",
 				iface_params.name.c_str());
@@ -1348,7 +1348,7 @@ struct hostapd_data * hostapd_get_iface_by_link_id(struct hapd_interfaces *inter
 
 	// find the iface and set up callback.
 	struct hostapd_data* iface_hapd = iface_params.usesMlo ?
-		hostapd_get_iface_by_link_id(interfaces_, (size_t) iface_params.name.c_str()) :
+		hostapd_get_iface_by_link_id(interfaces_, std::stoi(iface_params.name.c_str())) :
 		hostapd_get_iface(interfaces_, iface_params.name.c_str());
 	WPA_ASSERT(iface_hapd != nullptr && iface_hapd->iface != nullptr);
 	if (iface_params.usesMlo) {
@@ -1609,7 +1609,7 @@ const std::string& iface_name, const std::string& linkIdentity)
 		return createStatus(HostapdStatusCode::FAILURE_IFACE_UNKNOWN);
 	}
 	struct hostapd_data* iface_hapd =
-		hostapd_get_iface_by_link_id(interfaces_, (size_t) linkIdentity.c_str());
+		hostapd_get_iface_by_link_id(interfaces_, std::stoi(linkIdentity.c_str()));
 	if (iface_hapd) {
 // Currently, hostapd_link_remove is still under CONFIG_TESTING_OPTIONS.
 // TODO: b/340821197 - Make sure to take out the hostapd_link_remove() and other related code
