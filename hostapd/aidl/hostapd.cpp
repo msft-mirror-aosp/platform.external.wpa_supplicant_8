@@ -1314,13 +1314,26 @@ struct hostapd_data * hostapd_get_iface_by_link_id(struct hapd_interfaces *inter
 				iface_params.name.c_str());
 			return createStatus(HostapdStatusCode::FAILURE_IFACE_EXISTS);
 		}
-	}
-	if (hostapd_get_iface(interfaces_,
-			iface_params.usesMlo ? br_name.c_str() : iface_params.name.c_str())) {
-		wpa_printf(
-			MSG_ERROR, "Instance interface %s already present",
-			iface_params.usesMlo ? br_name.c_str() : iface_params.name.c_str());
-		return createStatus(HostapdStatusCode::FAILURE_IFACE_EXISTS);
+#ifdef CONFIG_IEEE80211BE
+		// The MLO AP uses the same interface name for all links. Thus, make sure the
+		// interface name wasn't used for non-mld AP only when adding a new interface.
+		// Also it is valid to have a hostapd_data with the same interface name when adding
+		// the second link instance.
+		struct hostapd_data* hapd = hostapd_get_iface(interfaces_, br_name.c_str());
+		if (hapd && !hapd->conf->mld_ap) {
+			wpa_printf(
+				MSG_ERROR, "Instance interface %s already present",
+						br_name.c_str());
+			return createStatus(HostapdStatusCode::FAILURE_IFACE_EXISTS);
+		}
+#endif
+	} else {
+		if (hostapd_get_iface(interfaces_, iface_params.name.c_str())) {
+			wpa_printf(
+				MSG_ERROR, "Instance interface %s already present",
+					iface_params.name.c_str());
+			return createStatus(HostapdStatusCode::FAILURE_IFACE_EXISTS);
+		}
 	}
 	const auto conf_params = CreateHostapdConfig(iface_params, channelParams, nw_params,
 					br_name, owe_transition_ifname);
