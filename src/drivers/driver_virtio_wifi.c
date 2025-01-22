@@ -215,8 +215,14 @@ static void *virtio_wifi_init(struct hostapd_data *hapd,
 	struct virtio_wifi_data *drv;
 	drv = os_zalloc(sizeof(*drv));
 	drv->hapd = hapd;
-	os_memcpy(drv->perm_addr, s_bssid, ETH_ALEN);
-	os_memcpy(hapd->own_addr, s_bssid, ETH_ALEN);
+	// Set customized bssid if set in hostapd conf
+	if (is_zero_ether_addr(hapd->conf->bssid)) {
+		os_memcpy(drv->perm_addr, s_bssid, ETH_ALEN);
+		os_memcpy(hapd->own_addr, s_bssid, ETH_ALEN);
+	} else {
+		os_memcpy(drv->perm_addr, hapd->conf->bssid, ETH_ALEN);
+		os_memcpy(hapd->own_addr, hapd->conf->bssid, ETH_ALEN);
+	}
 	os_memset(&drv->GTK, 0, sizeof(drv->GTK));
 	os_memset(&drv->PTK, 0, sizeof(drv->PTK));
 	drv->rwlock = android_rw_lock_new();
