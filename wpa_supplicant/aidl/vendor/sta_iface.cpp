@@ -405,7 +405,9 @@ bool validateUsdSubscribeConfig(UsdSubscribeConfig subscribeConfig) {
 	return true;
 }
 
-struct nan_publish_params convertAidlNanPublishParamsToInternal(UsdPublishConfig publishConfig) {
+struct nan_publish_params convertAidlNanPublishParamsToInternal(
+    const UsdPublishConfig& publishConfig)
+{
 	struct nan_publish_params nanPublishParams;
 	nanPublishParams.unsolicited =
 		publishConfig.publishType == UsdPublishConfig::PublishType::UNSOLICITED_ONLY
@@ -426,7 +428,8 @@ struct nan_publish_params convertAidlNanPublishParamsToInternal(UsdPublishConfig
 }
 
 struct nan_subscribe_params convertAidlNanSubscribeParamsToInternal(
-		UsdSubscribeConfig subscribeConfig) {
+    const UsdSubscribeConfig& subscribeConfig)
+{
 	struct nan_subscribe_params nanSubscribeParams;
 	nanSubscribeParams.active =
 		subscribeConfig.subscribeType == UsdSubscribeConfig::SubscribeType::ACTIVE_MODE;
@@ -883,9 +886,9 @@ bool StaIface::isValid()
 	DppCurve in_curve, DppResponderBootstrapInfo* _aidl_return)
 {
 	return validateAndCall(
-		this, SupplicantStatusCode::FAILURE_IFACE_INVALID,
-		&StaIface::generateDppBootstrapInfoForResponderInternal, _aidl_return, 
-		in_macAddress, in_deviceInfo, in_curve);
+	    this, SupplicantStatusCode::FAILURE_IFACE_INVALID,
+	    &StaIface::generateDppBootstrapInfoForResponderInternal,
+	    _aidl_return, in_macAddress, in_deviceInfo, in_curve);
 }
 
 ::ndk::ScopedAStatus StaIface::startDppEnrolleeResponder(
@@ -1853,8 +1856,8 @@ ndk::ScopedAStatus StaIface::stopDppInitiatorInternal()
 
 std::pair<DppResponderBootstrapInfo, ndk::ScopedAStatus>
 StaIface::generateDppBootstrapInfoForResponderInternal(
-	const std::vector<uint8_t> &mac_address, 
-	const std::string& device_info, DppCurve curve)
+    const std::vector<uint8_t>& mac_address, const std::string& device_info,
+    DppCurve curve)
 {
 #ifdef CONFIG_DPP
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
@@ -2774,6 +2777,15 @@ ndk::ScopedAStatus StaIface::startUsdPublishInternal(
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	struct nan_publish_params nanPublishParams =
 		convertAidlNanPublishParamsToInternal(usdPublishConfig);
+
+	std::vector<int32_t> freqListCopy;
+	if (!usdPublishConfig.usdBaseConfig.freqsMhz.empty()) {
+		freqListCopy = usdPublishConfig.usdBaseConfig.freqsMhz;
+		freqListCopy.push_back(0);
+		nanPublishParams.freq_list = freqListCopy.data();
+	} else {
+		nanPublishParams.freq_list = nullptr;
+	}
 
 	int publishId = wpas_nan_usd_publish(
 		wpa_s, usdPublishConfig.usdBaseConfig.serviceName.c_str(),
